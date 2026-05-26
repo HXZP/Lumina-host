@@ -1,0 +1,4 @@
+﻿build
+dist_release/Lumina/logs
+src/__pycache__
+dist_release/Lumina/lumina_orientation_config.json
