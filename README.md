@@ -22,27 +22,26 @@ Lumina-host/
 └─ README.md            项目说明
 ```
 
-## 运行
+## 运行源码版
 
-建议使用 Python 3.13。
+建议使用 Python 3.13，也支持 Python 3.12。
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe src\auto_dim_screen.py
+python -m pip install -r requirements.txt
+python src\auto_dim_screen.py
 ```
 
-如果没有创建本目录 `.venv`，`tools\build_release.bat` 会尝试复用相邻旧目录的可用虚拟环境。
+## 一键打包
 
-## 打包
-
-双击或运行：
+在新电脑上只需要安装 Python 3.13 或 Python 3.12，然后双击或运行：
 
 ```bat
 tools\build_release.bat
 ```
 
-打包成功后输出目录为：
+脚本会自动选择可用的 Python，检查并安装 `requirements.txt` 中的依赖，然后运行 PyInstaller 打包。
+
+打包成功后的输出目录为：
 
 ```text
 dist_release\Lumina
@@ -52,27 +51,27 @@ dist_release\Lumina
 
 ## 常见问题
 
-### 缺少 PyInstaller
+### 找不到 Python
 
-如果提示缺少 `PyInstaller` 或其他依赖，请安装依赖：
+安装 Python 3.13 或 Python 3.12，并在安装时勾选“Add python.exe to PATH”。安装完成后重新运行 `tools\build_release.bat`。
 
-```powershell
-python -m pip install -r requirements.txt
-```
+### 依赖安装失败
+
+确认电脑可以访问 Python 包源，然后重新运行 `tools\build_release.bat`。如果公司网络或安全软件拦截了 pip，需要先放行 Python 和 pip。
 
 ### Access is denied
 
-如果打包时报 `Access is denied`，通常是以下原因：
+打包时如果提示 `Access is denied`，通常是以下原因：
 
 - `Lumina.exe` 正在运行。
-- 资源管理器打开了 `dist_release\Lumina` 目录。
+- 资源管理器打开了 `dist_release\Lumina` 或 `build` 目录。
 - 上一次使用管理员权限打包，导致普通权限无法删除旧文件。
 
 处理方式：
 
 1. 退出正在运行的 Lumina。
 2. 关闭打开在 `dist_release` 或 `build` 下的资源管理器窗口。
-3. 删除 `build` 和 `dist_release` 后重新打包。
+3. 重新运行 `tools\build_release.bat`。
 4. 如果仍失败，使用管理员权限运行 `tools\build_release.bat`。
 
 ### 外接显示器无法调亮度
@@ -81,7 +80,7 @@ python -m pip install -r requirements.txt
 
 ## 自启动
 
-发布版可通过程序托盘菜单开启或关闭自启动，也可以使用：
+发布版可以通过程序托盘菜单开启或关闭自启动，也可以使用：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\install_autostart.ps1
@@ -93,6 +92,8 @@ powershell -ExecutionPolicy Bypass -File tools\uninstall_autostart.ps1
 ```text
 HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
 ```
+
+如果移动了 `Lumina` 文件夹位置，请重新运行程序并重新开启自启动。
 
 ## 日志
 

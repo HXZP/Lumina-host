@@ -1,4 +1,9 @@
-﻿build
+build
 dist_release/Lumina/logs
 src/__pycache__
 dist_release/Lumina/lumina_orientation_config.json
+.venv/
+.tmp/
+.build_deps/
+__pycache__/
+*.py[cod]

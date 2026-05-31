@@ -950,22 +950,103 @@ def quote_command_argument(argument: str) -> str:
     return f'"{escaped_argument}"'
 
 
+def split_windows_command_line(command: str) -> list[str]:
+    """
+    @brief 按 Windows 命令行规则拆分命令文本。
+    @param command 注册表启动项中的完整命令行。
+    @return list[str] 拆分后的参数列表。
+    @note CommandLineToArgvW 失败时使用简单降级解析，避免自启动状态判断抛出异常。
+    """
+
+    argument_count = ctypes.c_int(0)
+
+    try:
+        command_line_to_argv = ctypes.windll.shell32.CommandLineToArgvW
+        command_line_to_argv.argtypes = [
+            wintypes.LPCWSTR,
+            ctypes.POINTER(ctypes.c_int),
+        ]
+        command_line_to_argv.restype = ctypes.POINTER(ctypes.c_wchar_p)
+
+        argv_pointer = command_line_to_argv(
+            command,
+            ctypes.byref(argument_count),
+        )
+        if not argv_pointer:
+            return []
+
+        try:
+            return [
+                argv_pointer[index]
+                for index in range(argument_count.value)
+            ]
+        finally:
+            local_free = ctypes.windll.kernel32.LocalFree
+            local_free.argtypes = [
+                ctypes.c_void_p,
+            ]
+            local_free.restype = ctypes.c_void_p
+            local_free(ctypes.cast(argv_pointer, ctypes.c_void_p))
+    except (AttributeError, OSError):
+        stripped_command = command.strip()
+        if not stripped_command:
+            return []
+
+        if stripped_command.startswith('"'):
+            closing_quote_index = stripped_command.find('"', 1)
+            if closing_quote_index > 0:
+                return [
+                    stripped_command[1:closing_quote_index],
+                ]
+
+        return [
+            stripped_command.split(maxsplit=1)[0],
+        ]
+
+
+def normalize_autostart_path(path_text: str) -> str:
+    """
+    @brief 标准化自启动命令中的路径。
+    @param path_text 命令行中解析出的路径文本。
+    @return str 经过环境变量展开和绝对路径转换后的路径。
+    """
+
+    return os.path.normcase(
+        os.path.abspath(
+            os.path.expandvars(path_text),
+        )
+    )
+
+
+def get_current_application_entry_path() -> str:
+    """
+    @brief 获取当前程序对应的自启动入口路径。
+    @return str 打包版返回可执行文件路径，源码版返回当前脚本路径。
+    """
+
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(sys.executable)
+
+    return os.path.abspath(__file__)
+
+
 def build_autostart_command(arguments: argparse.Namespace) -> str:
     """
     @brief 构建写入注册表的自启动命令行。
     @param arguments 当前解析后的命令行参数对象。
     @return str 完整的自启动命令行文本。
-    @note 自启动命令会强制带上 --no-tray 以外的当前运行参数，并默认启用托盘模式。
+    @note 源码版使用当前 Python 解释器启动脚本，打包版直接启动 Lumina.exe。
     """
 
     if getattr(sys, "frozen", False):
-        executable_path = os.path.abspath(sys.executable)
+        command_parts = [
+            quote_command_argument(get_current_application_entry_path()),
+        ]
     else:
-        executable_path = os.path.abspath(__file__)
-
-    command_parts = [
-        quote_command_argument(executable_path),
-    ]
+        command_parts = [
+            quote_command_argument(os.path.abspath(sys.executable)),
+            quote_command_argument(get_current_application_entry_path()),
+        ]
 
     if arguments.target_brightness is not None:
         command_parts.append(str(arguments.target_brightness))
@@ -1000,6 +1081,44 @@ def build_autostart_command(arguments: argparse.Namespace) -> str:
     return " ".join(command_parts)
 
 
+def is_autostart_command_current(command: str) -> bool:
+    """
+    @brief 判断注册表启动命令是否指向当前 Lumina 程序。
+    @param command 注册表中保存的启动命令。
+    @return bool 启动命令可执行且指向当前程序时返回 True。
+    """
+
+    command_parts = split_windows_command_line(command)
+    if not command_parts:
+        return False
+
+    executable_path = normalize_autostart_path(command_parts[0])
+    if not os.path.isfile(executable_path):
+        logger.warning("自启动命令入口不存在: %s", command_parts[0])
+        return False
+
+    current_entry_path = normalize_autostart_path(
+        get_current_application_entry_path(),
+    )
+
+    if getattr(sys, "frozen", False):
+        return executable_path == current_entry_path
+
+    if executable_path == current_entry_path:
+        return True
+
+    if len(command_parts) < 2:
+        logger.warning("源码版自启动命令缺少脚本路径。")
+        return False
+
+    script_path = normalize_autostart_path(command_parts[1])
+    if not os.path.isfile(script_path):
+        logger.warning("自启动脚本不存在: %s", command_parts[1])
+        return False
+
+    return script_path == current_entry_path
+
+
 def is_autostart_enabled() -> bool:
     """
     @brief 判断当前用户是否已启用 Lumina 自启动。
@@ -1013,11 +1132,11 @@ def is_autostart_enabled() -> bool:
             0,
             winreg.KEY_READ,
         ) as registry_key:
-            winreg.QueryValueEx(
+            command, _value_type = winreg.QueryValueEx(
                 registry_key,
                 AUTOSTART_VALUE_NAME,
             )
-            return True
+            return is_autostart_command_current(str(command))
     except FileNotFoundError:
         return False
 

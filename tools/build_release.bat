@@ -1,105 +1,131 @@
 @echo off
+setlocal EnableExtensions
+
 set "TOOLS_DIR=%~dp0"
 for %%I in ("%TOOLS_DIR%..") do set "APP_DIR=%%~fI"
 cd /d "%APP_DIR%"
+if errorlevel 1 goto build_fail
 
+set "BUILD_ERR=1"
 set "PYTHON_CMD="
 set "PYTHON_SOURCE="
-set "BUILD_ERR=1"
+set "TEMP_DIR=%APP_DIR%\.tmp"
 
-call :try_python_cmd "%APP_DIR%\.venv\Scripts\python.exe" "Lumina-host venv"
-if not "%PYTHON_CMD%"=="" goto use_python_cmd
-call :try_python_cmd "%APP_DIR%\..\monitor\.venv\Scripts\python.exe" "legacy monitor venv"
-if not "%PYTHON_CMD%"=="" goto use_python_cmd
-call :try_python_cmd "%APP_DIR%\..\.venv\Scripts\python.exe" "script venv"
-if not "%PYTHON_CMD%"=="" goto use_python_cmd
-call :try_python_cmd "%APP_DIR%\..\..\.venv\Scripts\python.exe" "project venv"
-if not "%PYTHON_CMD%"=="" goto use_python_cmd
-call :try_python_cmd "%APP_DIR%\..\..\..\.venv\Scripts\python.exe" "workspace project venv"
-if not "%PYTHON_CMD%"=="" goto use_python_cmd
-call :try_python_cmd "%APP_DIR%\..\..\..\..\.venv\Scripts\python.exe" "workspace venv"
-if not "%PYTHON_CMD%"=="" goto use_python_cmd
+if not exist "%TEMP_DIR%" mkdir "%TEMP_DIR%"
+set "TEMP=%TEMP_DIR%"
+set "TMP=%TEMP_DIR%"
+set "TMPDIR=%TEMP_DIR%"
+set "PIP_DISABLE_PIP_VERSION_CHECK=1"
 
-where py >nul 2>&1
-if %errorlevel%==0 goto use_py
-where python >nul 2>&1
-if %errorlevel%==0 goto use_python
+call :select_python
+if "%PYTHON_CMD%"=="" goto no_python
 
-echo [ERROR] Neither py nor python is in PATH.
-echo Install Python from python.org and tick Add python.exe to PATH.
-goto end
+echo Using %PYTHON_SOURCE%:
+echo %PYTHON_CMD%
 
-:use_python_cmd
-echo Running PyInstaller via %PYTHON_SOURCE% ...
-if exist build\Lumina rmdir /s /q build\Lumina
-if exist dist_release\Lumina rmdir /s /q dist_release\Lumina
-"%PYTHON_CMD%" -c "import PyInstaller, pystray, PIL.Image, hid, win32com.client; print('dependency_check_ok')"
-if errorlevel 1 goto build_fail
-"%PYTHON_CMD%" -c "import sys; sys.path.insert(0, r'src'); import auto_dim_screen as m; m.write_tray_icon_to_ico(r'assets\Lumina.ico')"
-if errorlevel 1 goto build_fail
-"%PYTHON_CMD%" -m PyInstaller --clean --noconfirm --distpath dist_release tools\Lumina.spec
-set BUILD_ERR=%ERRORLEVEL%
-if not "%BUILD_ERR%"=="0" goto after_build
-"%PYTHON_CMD%" tools\write_release_readme.py
-set BUILD_ERR=%ERRORLEVEL%
-goto after_build
+call :ensure_build_dependencies "%PYTHON_CMD%"
+if errorlevel 1 goto dependency_fail
 
-:use_py
-echo Running PyInstaller via py -3 ...
-if exist build\Lumina rmdir /s /q build\Lumina
-if exist dist_release\Lumina rmdir /s /q dist_release\Lumina
-py -3 -c "import PyInstaller, pystray, PIL.Image, hid, win32com.client; print('dependency_check_ok')"
-if errorlevel 1 goto build_fail
-py -3 -c "import sys; sys.path.insert(0, r'src'); import auto_dim_screen as m; m.write_tray_icon_to_ico(r'assets\Lumina.ico')"
-if errorlevel 1 goto build_fail
-py -3 -m PyInstaller --clean --noconfirm --distpath dist_release tools\Lumina.spec
-set BUILD_ERR=%ERRORLEVEL%
-if not "%BUILD_ERR%"=="0" goto after_build
-py -3 tools\write_release_readme.py
-set BUILD_ERR=%ERRORLEVEL%
-goto after_build
-
-:use_python
-echo Running PyInstaller via python ...
-if exist build\Lumina rmdir /s /q build\Lumina
-if exist dist_release\Lumina rmdir /s /q dist_release\Lumina
-python -c "import PyInstaller, pystray, PIL.Image, hid, win32com.client; print('dependency_check_ok')"
-if errorlevel 1 goto build_fail
-python -c "import sys; sys.path.insert(0, r'src'); import auto_dim_screen as m; m.write_tray_icon_to_ico(r'assets\Lumina.ico')"
-if errorlevel 1 goto build_fail
-python -m PyInstaller --clean --noconfirm --distpath dist_release tools\Lumina.spec
-set BUILD_ERR=%ERRORLEVEL%
-if not "%BUILD_ERR%"=="0" goto after_build
-python tools\write_release_readme.py
-set BUILD_ERR=%ERRORLEVEL%
-goto after_build
-
-:after_build
+call :run_build "%PYTHON_CMD%"
+set "BUILD_ERR=%ERRORLEVEL%"
 if not "%BUILD_ERR%"=="0" goto build_fail
+
 echo.
 echo Done. Output folder:
 echo %APP_DIR%\dist_release\Lumina
 goto end
 
-:build_fail
-set BUILD_ERR=1
+:no_python
+echo [ERROR] No supported Python runtime was found.
+echo Install Python 3.13 or Python 3.12 from python.org, then run this script again.
+goto build_fail
+
+:dependency_fail
+set "BUILD_ERR=1"
 echo.
 echo BUILD FAILED.
-echo Install deps with: pip install -r requirements.txt
-echo If access is denied, close running Lumina.exe and all Explorer windows opened in dist.
+echo Could not prepare build dependencies automatically.
+echo Check network access, Python pip installation, and Windows security software.
+goto end
+
+:build_fail
+set "BUILD_ERR=1"
+echo.
+echo BUILD FAILED.
+echo If access is denied, close running Lumina.exe and all Explorer windows opened in dist_release.
+echo If Python is missing, install Python 3.13 or Python 3.12 from python.org.
 
 :end
 echo.
 pause
 exit /b %BUILD_ERR%
 
-:try_python_cmd
-if not exist "%~1" exit /b 0
-"%~1" -c "import PyInstaller, pystray, PIL.Image, hid, win32com.client" >nul 2>&1
-if errorlevel 1 (
-    echo Skipping %~2: missing build dependencies.
-    exit /b 0
-)
-set "PYTHON_CMD=%~1"
+:select_python
+call :try_py_launcher 3.13 "Python 3.13"
+if not "%PYTHON_CMD%"=="" exit /b 0
+
+call :try_py_launcher 3.12 "Python 3.12"
+if not "%PYTHON_CMD%"=="" exit /b 0
+
+call :try_python_command python "python on PATH"
+if not "%PYTHON_CMD%"=="" exit /b 0
+
+call :try_python_command python3 "python3 on PATH"
+exit /b 0
+
+:try_py_launcher
+set "CANDIDATE_PYTHON="
+for /f "delims=" %%P in ('py -%~1 -c "import sys; print(sys.executable)" 2^>nul') do set "CANDIDATE_PYTHON=%%P"
+if "%CANDIDATE_PYTHON%"=="" exit /b 0
+
+call :check_python_compatible "%CANDIDATE_PYTHON%"
+if errorlevel 1 exit /b 0
+
+set "PYTHON_CMD=%CANDIDATE_PYTHON%"
 set "PYTHON_SOURCE=%~2"
 exit /b 0
+
+:try_python_command
+set "CANDIDATE_PYTHON="
+for /f "delims=" %%P in ('%~1 -c "import sys; v=sys.version_info; ok=(v.major == 3 and v.minor in (12, 13)); print(sys.executable) if ok else sys.exit(1)" 2^>nul') do set "CANDIDATE_PYTHON=%%P"
+if "%CANDIDATE_PYTHON%"=="" exit /b 0
+
+set "PYTHON_CMD=%CANDIDATE_PYTHON%"
+set "PYTHON_SOURCE=%~2"
+exit /b 0
+
+:check_python_compatible
+"%~1" -c "import sys; v=sys.version_info; sys.exit(0 if (v.major == 3 and v.minor in (12, 13)) else 1)" >nul 2>&1
+exit /b %ERRORLEVEL%
+
+:ensure_build_dependencies
+"%~1" -c "import PyInstaller, pystray, PIL.Image, hid, win32com.client; print('dependency_check_ok')" >nul 2>&1
+if not errorlevel 1 exit /b 0
+
+echo Installing build dependencies from requirements.txt ...
+"%~1" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] pip is not available for the selected Python.
+    echo Reinstall Python and keep the pip option enabled.
+    exit /b 1
+)
+
+"%~1" -m pip install --upgrade -r requirements.txt
+if errorlevel 1 exit /b 1
+
+"%~1" -c "import PyInstaller, pystray, PIL.Image, hid, win32com.client; print('dependency_check_ok')"
+exit /b %ERRORLEVEL%
+
+:run_build
+echo Running PyInstaller ...
+if exist build\Lumina rmdir /s /q build\Lumina
+if exist dist_release\Lumina rmdir /s /q dist_release\Lumina
+
+"%~1" -c "import sys; sys.path.insert(0, r'src'); import auto_dim_screen as m; m.write_tray_icon_to_ico(r'assets\Lumina.ico')"
+if errorlevel 1 exit /b 1
+
+"%~1" -m PyInstaller --clean --noconfirm --distpath dist_release tools\Lumina.spec
+if errorlevel 1 exit /b 1
+
+"%~1" tools\write_release_readme.py
+exit /b %ERRORLEVEL%
