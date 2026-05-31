@@ -48,6 +48,8 @@ LUMINA_HID_ORIENTATION_TO_TEXT = {
     2: "X-",
     3: "Y+",
     4: "Y-",
+    5: "Z+",
+    6: "Z-",
 }
 ORIENTATION_TO_STEP = {
     "X+": 0,
@@ -68,6 +70,7 @@ DEFAULT_BRIGHTNESS_LEVELS = [
     {"min_lux": 60.0, "max_lux": 100.0, "brightness": 75},
     {"min_lux": 100.0, "max_lux": None, "brightness": 100},
 ]
+AUTO_BRIGHTNESS_LEVEL_STABLE_SECONDS = 3.0
 DEFAULT_BRIGHTNESS_LEVEL_LABELS = [
     "0~10",
     "10~30",
@@ -199,6 +202,19 @@ class LuminaHidEvent:
     lux: float | None
     device_id: str
     sequence: int
+
+
+@dataclass
+class LuminaBrightnessStableState:
+    """
+    @brief 保存单台 Lumina 的自动亮度稳定状态。
+    @note level_index 为当前稳定档位，candidate_level_index 为等待确认的候选档位。
+    """
+
+    level_index: int | None = None
+    candidate_level_index: int | None = None
+    candidate_started_at: float | None = None
+    levels_signature: tuple[tuple[float, float | None, int], ...] | None = None
 
 
 def normalize_brightness_mode(text: str) -> str:
@@ -345,17 +361,179 @@ def normalize_brightness_levels(
     return normalized_levels
 
 
+def build_brightness_levels_signature(
+    levels: list[dict[str, float | int | None]],
+) -> tuple[tuple[float, float | None, int], ...]:
+    """
+    @brief 生成自动亮度档位配置签名。
+    @param levels 已标准化的自动亮度档位配置。
+    @return 返回可比较的档位配置签名。
+    @note 签名用于识别用户是否修改过档位范围或亮度值。
+    """
+
+    signature_items: list[tuple[float, float | None, int]] = []
+
+    for level in levels:
+        max_lux = level.get("max_lux")
+        normalized_max_lux: float | None = None
+
+        if max_lux is not None:
+            normalized_max_lux = float(max_lux)
+
+        signature_items.append(
+            (
+                float(level["min_lux"]),
+                normalized_max_lux,
+                normalize_brightness_percentage(level["brightness"]),
+            )
+        )
+
+    return tuple(signature_items)
+
+
+def get_brightness_level_index_from_lux(
+    lux_value: float,
+    levels: list[dict[str, float | int | None]],
+) -> int:
+    """
+    @brief 根据 lux 和档位配置计算当前所在档位索引。
+    @param lux_value 环境亮度，单位为 lux。
+    @param levels 已标准化的自动亮度档位配置。
+    @return 返回档位索引。
+    """
+
+    for index, level in enumerate(levels):
+        min_lux = float(level["min_lux"])
+        max_lux = level["max_lux"]
+
+        if lux_value < min_lux:
+            continue
+
+        if max_lux is not None and lux_value >= float(max_lux):
+            continue
+
+        return index
+
+    return len(levels) - 1
+
+
+def reset_brightness_level_candidate(
+    state: LuminaBrightnessStableState,
+) -> None:
+    """
+    @brief 清空自动亮度候选档位状态。
+    @param state 自动亮度稳定状态。
+    @return None
+    """
+
+    state.candidate_level_index = None
+    state.candidate_started_at = None
+
+
+def update_brightness_level_with_stable_delay(
+    lux_value: float,
+    levels: list[dict[str, float | int | None]],
+    state: LuminaBrightnessStableState,
+    current_time: float,
+) -> int:
+    """
+    @brief 使用候选档位稳定时间更新自动亮度档位。
+    @param lux_value 环境亮度，单位为 lux。
+    @param levels 已标准化的自动亮度档位配置。
+    @param state 自动亮度稳定状态。
+    @param current_time 当前单调时间，单位为秒。
+    @return 返回新的稳定档位索引。
+    @note 档位范围严格来自配置；候选档位持续稳定后才提交，避免边界抖动导致闪烁。
+    """
+
+    raw_level_index = get_brightness_level_index_from_lux(
+        lux_value,
+        levels,
+    )
+
+    if state.level_index is None:
+        reset_brightness_level_candidate(state)
+        return raw_level_index
+
+    if state.level_index < 0 or state.level_index >= len(levels):
+        reset_brightness_level_candidate(state)
+        return raw_level_index
+
+    if raw_level_index == state.level_index:
+        reset_brightness_level_candidate(state)
+        return state.level_index
+
+    if state.candidate_level_index != raw_level_index:
+        state.candidate_level_index = raw_level_index
+        state.candidate_started_at = current_time
+        return state.level_index
+
+    if state.candidate_started_at is None:
+        state.candidate_started_at = current_time
+        return state.level_index
+
+    if (
+        current_time - state.candidate_started_at
+        < AUTO_BRIGHTNESS_LEVEL_STABLE_SECONDS
+    ):
+        return state.level_index
+
+    reset_brightness_level_candidate(state)
+    return raw_level_index
+
+
+def get_brightness_percentage_from_level_index(
+    levels: list[dict[str, float | int | None]],
+    level_index: int,
+) -> int:
+    """
+    @brief 根据档位索引读取目标亮度百分比。
+    @param levels 已标准化的自动亮度档位配置。
+    @param level_index 档位索引。
+    @return 返回目标亮度百分比。
+    """
+
+    if level_index < 0:
+        level_index = 0
+
+    if level_index >= len(levels):
+        level_index = len(levels) - 1
+
+    return normalize_brightness_percentage(levels[level_index]["brightness"])
+
+
+def get_brightness_level_label_from_index(
+    levels: list[dict[str, float | int | None]],
+    level_index: int,
+) -> str:
+    """
+    @brief 根据档位索引读取档位范围标签。
+    @param levels 已标准化的自动亮度档位配置。
+    @param level_index 档位索引。
+    @return 返回档位范围标签。
+    """
+
+    if level_index < 0:
+        level_index = 0
+
+    if level_index >= len(levels):
+        level_index = len(levels) - 1
+
+    return format_brightness_level_range_label(levels[level_index])
+
+
 def normalize_lumina_orientation(text: str) -> str:
     """
     @brief 标准化 Lumina 朝向字符串。
     @param text 用户输入或设备消息中的朝向文本。
     @return 返回标准化后的 X+/X-/Y+/Y- 文本。
+    @note Z+/Z- 仅作为设备当前朝向上报，不作为屏幕正放基准。
     """
 
     orientation = text.strip().upper()
 
     if orientation not in ORIENTATION_TO_STEP:
-        raise ValueError("朝向必须是 X+、X-、Y+ 或 Y-")
+        raise ValueError("屏幕旋转基准朝向必须是 X+、X-、Y+ 或 Y-")
 
     return orientation
 
@@ -982,6 +1160,10 @@ def apply_lumina_orientation(
     @return None
     """
 
+    if current_orientation not in ORIENTATION_TO_STEP:
+        print(f"收到 {current_orientation}，Z 轴朝向不参与屏幕旋转。")
+        return
+
     target_orientation = calculate_target_orientation(
         config.home_orientation,
         current_orientation,
@@ -1022,6 +1204,7 @@ class LuminaOrientationWorker:
         self._device_threads: dict[str, threading.Thread] = {}
         self._device_paths: dict[str, bytes | str] = {}
         self._path_device_keys: dict[str, str] = {}
+        self._brightness_stable_states: dict[str, LuminaBrightnessStableState] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
@@ -1388,10 +1571,13 @@ class LuminaOrientationWorker:
                 if status.current_lux is None:
                     continue
 
-                target = calculate_brightness_from_lux(
-                    status.current_lux,
-                    config.brightness_levels,
+                target = self._calculate_brightness_target_locked(
+                    config,
+                    status,
                 )
+
+                if target is None:
+                    continue
 
                 for display_index in normalize_brightness_display_indexes(
                     config.brightness_display_indexes
@@ -1682,6 +1868,14 @@ class LuminaOrientationWorker:
         if not config.enabled:
             return
 
+        if current_orientation not in ORIENTATION_TO_STEP:
+            logger.info(
+                "Lumina [%s] 当前朝向 %s 不参与自动旋转。",
+                device_key,
+                current_orientation,
+            )
+            return
+
         apply_lumina_orientation(
             convert_device_to_orientation_config(config),
             current_orientation,
@@ -1754,6 +1948,11 @@ class LuminaOrientationWorker:
 
             if old_key in self._device_threads:
                 self._device_threads[new_key] = self._device_threads.pop(old_key)
+
+            if old_key in self._brightness_stable_states:
+                self._brightness_stable_states[new_key] = (
+                    self._brightness_stable_states.pop(old_key)
+                )
 
             if path_key is not None:
                 self._path_device_keys[path_key] = new_key
@@ -1949,6 +2148,63 @@ class LuminaOrientationWorker:
             message=message,
         )
 
+    def _get_brightness_stable_state_locked(
+        self,
+        device_key: str,
+    ) -> LuminaBrightnessStableState:
+        """
+        @brief 获取指定 Lumina 的自动亮度稳定状态。
+        @param device_key Lumina 设备 key。
+        @return 返回自动亮度稳定状态。
+        @note 该函数只在持有 self._lock 时调用。
+        """
+
+        normalized_key = normalize_device_key(device_key)
+        state = self._brightness_stable_states.get(normalized_key)
+
+        if state is None:
+            state = LuminaBrightnessStableState()
+            self._brightness_stable_states[normalized_key] = state
+
+        return state
+
+    def _calculate_brightness_target_locked(
+        self,
+        config: LuminaDeviceConfig,
+        status: LuminaDeviceStatus,
+    ) -> int | None:
+        """
+        @brief 计算指定 Lumina 的稳定自动亮度目标。
+        @param config Lumina 配置。
+        @param status Lumina 状态。
+        @return 返回稳定目标亮度百分比，条件不足时返回 None。
+        @note 使用候选档位稳定时间，档位范围修改后会自动重建状态。
+        """
+
+        if status.current_lux is None:
+            return None
+
+        levels = normalize_brightness_levels(config.brightness_levels)
+        levels_signature = build_brightness_levels_signature(levels)
+        state = self._get_brightness_stable_state_locked(config.device_key)
+
+        if state.levels_signature != levels_signature:
+            state.level_index = None
+            reset_brightness_level_candidate(state)
+            state.levels_signature = levels_signature
+
+        state.level_index = update_brightness_level_with_stable_delay(
+            status.current_lux,
+            levels,
+            state,
+            time.monotonic(),
+        )
+
+        return get_brightness_percentage_from_level_index(
+            levels,
+            state.level_index,
+        )
+
     def _calculate_level_label_locked(
         self,
         config: LuminaDeviceConfig,
@@ -1967,9 +2223,26 @@ class LuminaOrientationWorker:
         if status.current_lux is None:
             return None
 
-        return calculate_brightness_level_label(
-            status.current_lux,
-            config.brightness_levels,
+        levels = normalize_brightness_levels(config.brightness_levels)
+        levels_signature = build_brightness_levels_signature(levels)
+        state = self._get_brightness_stable_state_locked(config.device_key)
+
+        if state.levels_signature != levels_signature:
+            state.level_index = None
+            reset_brightness_level_candidate(state)
+            state.levels_signature = levels_signature
+
+        if state.level_index is None:
+            state.level_index = update_brightness_level_with_stable_delay(
+                status.current_lux,
+                levels,
+                state,
+                time.monotonic(),
+            )
+
+        return get_brightness_level_label_from_index(
+            levels,
+            state.level_index,
         )
 
     def _get_connected_count_locked(self) -> int:

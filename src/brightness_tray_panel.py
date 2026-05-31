@@ -397,6 +397,44 @@ def format_panel_level_range(
     return f"{min_text}~{format_panel_lux_value(max_lux)} lux"
 
 
+def configure_panel_entry_focus(entry_widget: tk.Entry) -> None:
+    """
+    @brief 配置无边框透明面板中的输入框焦点与选中样式。
+    @param entry_widget 需要配置的输入框控件。
+    @return None
+    @note Windows 透明无边框窗口中，Canvas 内嵌输入框有时不会自动显示光标。
+    """
+
+    def focus_entry_on_mouse_press(event: tk.Event) -> None:
+        """
+        @brief 鼠标按下输入框时显式激活输入焦点。
+        @param event Tk 鼠标事件。
+        @return None
+        """
+
+        widget = event.widget
+
+        if not isinstance(widget, tk.Entry):
+            return
+
+        try:
+            widget.focus_force()
+        except tk.TclError:
+            return
+
+    entry_widget.configure(
+        takefocus=True,
+        insertwidth=2,
+        selectbackground=ACCENT_COLOR,
+        selectforeground="#151922",
+    )
+    entry_widget.bind(
+        "<ButtonPress-1>",
+        focus_entry_on_mouse_press,
+        add="+",
+    )
+
+
 class BrightnessRangeEditor(tk.Toplevel):
     """
     @brief 自动亮度档位范围编辑浮窗。
@@ -556,6 +594,7 @@ class BrightnessRangeEditor(tk.Toplevel):
                 highlightbackground=PANEL_BORDER,
                 highlightcolor=ACCENT_COLOR,
             )
+            configure_panel_entry_focus(value_entry)
             canvas.create_window(
                 value_x,
                 row_y,
@@ -1521,9 +1560,44 @@ class BrightnessTrayPanelController:
                 levels = normalize_panel_level_list(None)
 
             level_vars = [
-                tk.IntVar(value=int(level.get("brightness", 0)))
+                tk.StringVar(value=str(int(level.get("brightness", 0))))
                 for level in levels
             ]
+            level_submit_after_id: str | None = None
+
+            def cancel_device_config_later() -> None:
+                """
+                @brief 取消当前卡片控件值的延迟提交。
+                @return None
+                """
+
+                nonlocal level_submit_after_id
+
+                if level_submit_after_id is None:
+                    return
+
+                try:
+                    win.after_cancel(level_submit_after_id)
+                except tk.TclError:
+                    pass
+
+                level_submit_after_id = None
+
+            def sync_level_vars_from_levels() -> None:
+                """
+                @brief 将当前档位配置中的亮度值同步到输入框变量。
+                @return None
+                @note 范围编辑保存后调用，避免旧输入框状态覆盖新的档位配置。
+                """
+
+                for level_index, level in enumerate(levels):
+                    if level_index >= len(level_vars):
+                        continue
+
+                    level_vars[level_index].set(
+                        str(int(level.get("brightness", 0)))
+                    )
+
             def get_level_value(level_index: int) -> int:
                 """
                 @brief 获取并限制指定自动亮度档位输入值。
@@ -1533,7 +1607,7 @@ class BrightnessTrayPanelController:
 
                 try:
                     level_value = int(level_vars[level_index].get())
-                except tk.TclError:
+                except (tk.TclError, ValueError):
                     level_value = 0
 
                 if level_value < 0:
@@ -1544,6 +1618,45 @@ class BrightnessTrayPanelController:
 
                 level_vars[level_index].set(level_value)
                 return level_value
+
+            def submit_device_config_later() -> None:
+                """
+                @brief 延迟提交当前卡片控件值。
+                @return None
+                @note 用于档位输入框停止输入后自动保存，避免每个按键都写配置。
+                """
+
+                nonlocal level_submit_after_id
+
+                cancel_device_config_later()
+
+                level_submit_after_id = win.after(
+                    500,
+                    submit_device_config_from_delay,
+                )
+
+            def submit_device_config_from_delay() -> None:
+                """
+                @brief 处理档位输入框延迟提交回调。
+                @return None
+                """
+
+                nonlocal level_submit_after_id
+
+                level_submit_after_id = None
+                submit_device_config()
+
+            def submit_device_config_now() -> None:
+                """
+                @brief 立即提交当前卡片控件值并取消待执行的延迟提交。
+                @return None
+                """
+
+                nonlocal level_submit_after_id
+
+                cancel_device_config_later()
+
+                submit_device_config()
 
             def submit_device_config() -> None:
                 """
@@ -1572,6 +1685,7 @@ class BrightnessTrayPanelController:
                         }
                     )
 
+                levels[:] = next_levels
                 update_lumina_device_config(
                     device_key,
                     display_index,
@@ -1606,11 +1720,13 @@ class BrightnessTrayPanelController:
                     @return None
                     """
 
+                    cancel_device_config_later()
                     next_levels = build_panel_levels_from_breakpoints(
                         get_brightness_values(),
                         breakpoints,
                     )
                     levels[:] = next_levels
+                    sync_level_vars_from_levels()
                     submit_device_config()
 
                 open_brightness_range_editor(
@@ -1817,8 +1933,19 @@ class BrightnessTrayPanelController:
                     bd=0,
                     highlightthickness=0,
                 )
-                level_entry.bind("<FocusOut>", lambda _event: submit_device_config())
-                level_entry.bind("<Return>", lambda _event: submit_device_config())
+                configure_panel_entry_focus(level_entry)
+                level_entry.bind(
+                    "<KeyRelease>",
+                    lambda _event: submit_device_config_later(),
+                )
+                level_entry.bind(
+                    "<FocusOut>",
+                    lambda _event: submit_device_config_now(),
+                )
+                level_entry.bind(
+                    "<Return>",
+                    lambda _event: submit_device_config_now(),
+                )
                 canvas.create_window(
                     label_x,
                     level_entry_y,
@@ -2031,6 +2158,60 @@ class BrightnessTrayPanelController:
         refresh_monitor_scale_visibility()
 
         idle_delay_var = tk.StringVar(value=f"{get_idle_delay_seconds():.1f}")
+        idle_delay_submit_after_id: str | None = None
+
+        def cancel_idle_delay_later() -> None:
+            """
+            @brief 取消自动暗屏空闲阈值的延迟提交。
+            @return None
+            """
+
+            nonlocal idle_delay_submit_after_id
+
+            if idle_delay_submit_after_id is None:
+                return
+
+            try:
+                win.after_cancel(idle_delay_submit_after_id)
+            except tk.TclError:
+                pass
+
+            idle_delay_submit_after_id = None
+
+        def submit_idle_delay_later() -> None:
+            """
+            @brief 延迟提交自动暗屏空闲阈值。
+            @return None
+            @note 用于输入停止后自动保存空闲阈值。
+            """
+
+            nonlocal idle_delay_submit_after_id
+
+            cancel_idle_delay_later()
+            idle_delay_submit_after_id = win.after(
+                700,
+                submit_idle_delay_from_delay,
+            )
+
+        def submit_idle_delay_from_delay() -> None:
+            """
+            @brief 处理自动暗屏空闲阈值延迟提交回调。
+            @return None
+            """
+
+            nonlocal idle_delay_submit_after_id
+
+            idle_delay_submit_after_id = None
+            submit_idle_delay()
+
+        def submit_idle_delay_now() -> None:
+            """
+            @brief 立即提交自动暗屏空闲阈值并取消待执行的延迟提交。
+            @return None
+            """
+
+            cancel_idle_delay_later()
+            submit_idle_delay()
 
         def submit_idle_delay() -> None:
             """
@@ -2261,8 +2442,19 @@ class BrightnessTrayPanelController:
             bd=0,
             highlightthickness=0,
         )
-        idle_delay_entry.bind("<FocusOut>", lambda _event: submit_idle_delay())
-        idle_delay_entry.bind("<Return>", lambda _event: submit_idle_delay())
+        configure_panel_entry_focus(idle_delay_entry)
+        idle_delay_entry.bind(
+            "<KeyRelease>",
+            lambda _event: submit_idle_delay_later(),
+        )
+        idle_delay_entry.bind(
+            "<FocusOut>",
+            lambda _event: submit_idle_delay_now(),
+        )
+        idle_delay_entry.bind(
+            "<Return>",
+            lambda _event: submit_idle_delay_now(),
+        )
         idle_delay_entry.bind(
             "<Enter>",
             lambda _event: show_tooltip(
@@ -2332,7 +2524,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 1.0",
+            text="化学制品 | 1.1",
             fill=TEXT_SECONDARY,
             font=tiny_font,
             anchor=tk.SW,
@@ -2857,11 +3049,45 @@ class BrightnessTrayPanelController:
             getattr(lumina_config, "brightness_levels", None)
         )
 
-        brightness_level_vars: list[tk.IntVar] = []
+        brightness_level_vars: list[tk.StringVar] = []
         for level in brightness_levels:
             brightness_level_vars.append(
-                tk.IntVar(value=int(level.get("brightness", 0)))
+                tk.StringVar(value=str(int(level.get("brightness", 0))))
             )
+        brightness_level_submit_after_id: str | None = None
+
+        def cancel_lumina_config_later() -> None:
+            """
+            @brief 取消 Lumina 配置控件值的延迟提交。
+            @return None
+            """
+
+            nonlocal brightness_level_submit_after_id
+
+            if brightness_level_submit_after_id is None:
+                return
+
+            try:
+                win.after_cancel(brightness_level_submit_after_id)
+            except tk.TclError:
+                pass
+
+            brightness_level_submit_after_id = None
+
+        def sync_brightness_level_vars_from_levels() -> None:
+            """
+            @brief 将当前档位配置中的亮度值同步到输入框变量。
+            @return None
+            @note 范围编辑保存后调用，避免旧输入框状态覆盖新的档位配置。
+            """
+
+            for level_index, level in enumerate(brightness_levels):
+                if level_index >= len(brightness_level_vars):
+                    continue
+
+                brightness_level_vars[level_index].set(
+                    str(int(level.get("brightness", 0)))
+                )
 
         def get_brightness_level_value(level_index: int) -> int:
             """
@@ -2872,7 +3098,7 @@ class BrightnessTrayPanelController:
 
             try:
                 level_value = int(brightness_level_vars[level_index].get())
-            except tk.TclError:
+            except (tk.TclError, ValueError):
                 level_value = 0
 
             if level_value < 0:
@@ -2884,6 +3110,45 @@ class BrightnessTrayPanelController:
             brightness_level_vars[level_index].set(level_value)
 
             return level_value
+
+        def submit_lumina_config_later() -> None:
+            """
+            @brief 延迟提交 Lumina 配置控件中的值。
+            @return None
+            @note 用于档位输入框停止输入后自动保存，避免每个按键都写配置。
+            """
+
+            nonlocal brightness_level_submit_after_id
+
+            cancel_lumina_config_later()
+
+            brightness_level_submit_after_id = win.after(
+                500,
+                submit_lumina_config_from_delay,
+            )
+
+        def submit_lumina_config_from_delay() -> None:
+            """
+            @brief 处理亮度档位输入框延迟提交回调。
+            @return None
+            """
+
+            nonlocal brightness_level_submit_after_id
+
+            brightness_level_submit_after_id = None
+            submit_lumina_config()
+
+        def submit_lumina_config_now() -> None:
+            """
+            @brief 立即提交 Lumina 配置控件中的值并取消待执行的延迟提交。
+            @return None
+            """
+
+            nonlocal brightness_level_submit_after_id
+
+            cancel_lumina_config_later()
+
+            submit_lumina_config()
 
         def get_brightness_level_values() -> list[int]:
             """
@@ -2909,11 +3174,13 @@ class BrightnessTrayPanelController:
                 @return None
                 """
 
+                cancel_lumina_config_later()
                 next_levels = build_panel_levels_from_breakpoints(
                     get_brightness_level_values(),
                     breakpoints,
                 )
                 brightness_levels[:] = next_levels
+                sync_brightness_level_vars_from_levels()
                 submit_lumina_config()
 
             open_brightness_range_editor(
@@ -2923,6 +3190,60 @@ class BrightnessTrayPanelController:
             )
 
         idle_delay_var = tk.StringVar(value=f"{get_idle_delay_seconds():.1f}")
+        idle_delay_submit_after_id: str | None = None
+
+        def cancel_idle_delay_later() -> None:
+            """
+            @brief 取消自动暗屏空闲阈值的延迟提交。
+            @return None
+            """
+
+            nonlocal idle_delay_submit_after_id
+
+            if idle_delay_submit_after_id is None:
+                return
+
+            try:
+                win.after_cancel(idle_delay_submit_after_id)
+            except tk.TclError:
+                pass
+
+            idle_delay_submit_after_id = None
+
+        def submit_idle_delay_later() -> None:
+            """
+            @brief 延迟提交自动暗屏空闲阈值。
+            @return None
+            @note 用于输入停止后自动保存空闲阈值。
+            """
+
+            nonlocal idle_delay_submit_after_id
+
+            cancel_idle_delay_later()
+            idle_delay_submit_after_id = win.after(
+                700,
+                submit_idle_delay_from_delay,
+            )
+
+        def submit_idle_delay_from_delay() -> None:
+            """
+            @brief 处理自动暗屏空闲阈值延迟提交回调。
+            @return None
+            """
+
+            nonlocal idle_delay_submit_after_id
+
+            idle_delay_submit_after_id = None
+            submit_idle_delay()
+
+        def submit_idle_delay_now() -> None:
+            """
+            @brief 立即提交自动暗屏空闲阈值并取消待执行的延迟提交。
+            @return None
+            """
+
+            cancel_idle_delay_later()
+            submit_idle_delay()
 
         def submit_idle_delay() -> None:
             """
@@ -2963,6 +3284,7 @@ class BrightnessTrayPanelController:
                     }
                 )
 
+            brightness_levels[:] = next_levels
             update_lumina_config(
                 display_index,
                 next_orientation,
@@ -3457,8 +3779,19 @@ class BrightnessTrayPanelController:
                 bd=0,
                 highlightthickness=0,
             )
-            level_entry.bind("<FocusOut>", lambda _event: submit_lumina_config())
-            level_entry.bind("<Return>", lambda _event: submit_lumina_config())
+            configure_panel_entry_focus(level_entry)
+            level_entry.bind(
+                "<KeyRelease>",
+                lambda _event: submit_lumina_config_later(),
+            )
+            level_entry.bind(
+                "<FocusOut>",
+                lambda _event: submit_lumina_config_now(),
+            )
+            level_entry.bind(
+                "<Return>",
+                lambda _event: submit_lumina_config_now(),
+            )
             canvas.create_window(
                 label_x,
                 level_entry_y,
@@ -3747,8 +4080,19 @@ class BrightnessTrayPanelController:
             bd=0,
             highlightthickness=0,
         )
-        idle_delay_entry.bind("<FocusOut>", lambda _event: submit_idle_delay())
-        idle_delay_entry.bind("<Return>", lambda _event: submit_idle_delay())
+        configure_panel_entry_focus(idle_delay_entry)
+        idle_delay_entry.bind(
+            "<KeyRelease>",
+            lambda _event: submit_idle_delay_later(),
+        )
+        idle_delay_entry.bind(
+            "<FocusOut>",
+            lambda _event: submit_idle_delay_now(),
+        )
+        idle_delay_entry.bind(
+            "<Return>",
+            lambda _event: submit_idle_delay_now(),
+        )
         idle_delay_entry.bind(
             "<Enter>",
             lambda _event: show_tooltip(
@@ -3783,7 +4127,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 1.0",
+            text="化学制品 | 1.1",
             fill=TEXT_SECONDARY,
             font=small_font,
             anchor=tk.SW,
