@@ -44,6 +44,7 @@ LUMINA_HID_EVENT_CLICK = 5
 LUMINA_HID_EVENT_STATE = 6
 LUMINA_HID_ORIENTATION_UNKNOWN = 0
 LUMINA_HID_ORIENTATION_TO_TEXT = {
+    0: "UNKNOWN",
     1: "X+",
     2: "X-",
     3: "Y+",
@@ -51,11 +52,16 @@ LUMINA_HID_ORIENTATION_TO_TEXT = {
     5: "Z+",
     6: "Z-",
 }
+LUMINA_ORIENTATION_CHOICES = ("X+", "X-", "Y+", "Y-", "Z+", "Z-")
 ORIENTATION_TO_STEP = {
     "X+": 0,
     "Y+": 1,
     "X-": 2,
     "Y-": 3,
+}
+STEP_TO_LUMINA_ORIENTATION = {
+    step: orientation
+    for orientation, step in ORIENTATION_TO_STEP.items()
 }
 STEP_TO_WINDOWS_ORIENTATION = {
     0: DMDO_DEFAULT,
@@ -112,6 +118,8 @@ class LuminaOrientationConfig:
 
     display_index: int
     home_orientation: str
+    display_x_orientation: str = "X+"
+    display_y_orientation: str = "Y+"
     enabled: bool = True
     brightness_mode: str = "manual"
     brightness_levels: list[dict[str, float | int | None]] | None = None
@@ -128,6 +136,8 @@ class LuminaDeviceConfig:
     label: str
     display_index: int
     home_orientation: str
+    display_x_orientation: str = "X+"
+    display_y_orientation: str = "Y+"
     enabled: bool = True
     brightness_mode: str = "manual"
     brightness_display_indexes: list[int] = field(default_factory=list)
@@ -526,16 +536,104 @@ def normalize_lumina_orientation(text: str) -> str:
     """
     @brief 标准化 Lumina 朝向字符串。
     @param text 用户输入或设备消息中的朝向文本。
-    @return 返回标准化后的 X+/X-/Y+/Y- 文本。
-    @note Z+/Z- 仅作为设备当前朝向上报，不作为屏幕正放基准。
+    @return 返回标准化后的 X+/X-/Y+/Y-/Z+/Z- 文本。
     """
 
     orientation = text.strip().upper()
 
-    if orientation not in ORIENTATION_TO_STEP:
-        raise ValueError("屏幕旋转基准朝向必须是 X+、X-、Y+ 或 Y-")
+    if orientation not in LUMINA_ORIENTATION_CHOICES:
+        raise ValueError("Lumina 朝向必须是 X+、X-、Y+、Y-、Z+ 或 Z-")
 
     return orientation
+
+
+def get_opposite_lumina_orientation(orientation: str) -> str:
+    """
+    @brief 获取 Lumina 机身朝向的反向。
+    @param orientation Lumina 机身朝向。
+    @return 返回反向后的 Lumina 机身朝向。
+    """
+
+    normalized_orientation = normalize_lumina_orientation(orientation)
+    axis_name = normalized_orientation[0]
+    sign_text = normalized_orientation[1]
+
+    if sign_text == "+":
+        return f"{axis_name}-"
+
+    return f"{axis_name}+"
+
+
+def are_lumina_orientations_parallel(
+    first_orientation: str,
+    second_orientation: str,
+) -> bool:
+    """
+    @brief 判断两个 Lumina 朝向是否属于同一机身轴。
+    @param first_orientation 第一个 Lumina 朝向。
+    @param second_orientation 第二个 Lumina 朝向。
+    @return bool 同轴时返回 True，否则返回 False。
+    """
+
+    first_normalized_orientation = normalize_lumina_orientation(first_orientation)
+    second_normalized_orientation = normalize_lumina_orientation(second_orientation)
+
+    return first_normalized_orientation[0] == second_normalized_orientation[0]
+
+
+def normalize_display_axis_orientation_pair(
+    display_x_orientation: str,
+    display_y_orientation: str,
+) -> tuple[str, str]:
+    """
+    @brief 标准化显示器横向和纵向对应的 Lumina 机身朝向。
+    @param display_x_orientation 显示器横向左到右对应的 Lumina 朝向。
+    @param display_y_orientation 显示器下到上对应的 Lumina 朝向。
+    @return tuple[str, str] 返回标准化后的 X 轴和 Y 轴绑定。
+    @note 两个显示器轴必须绑定到 Lumina 身上的两条不同轴。
+    """
+
+    normalized_x_orientation = normalize_lumina_orientation(display_x_orientation)
+    normalized_y_orientation = normalize_lumina_orientation(display_y_orientation)
+
+    if are_lumina_orientations_parallel(
+        normalized_x_orientation,
+        normalized_y_orientation,
+    ):
+        raise ValueError("显示器 X 轴和 Y 轴不能绑定到 Lumina 的同一条轴")
+
+    return (
+        normalized_x_orientation,
+        normalized_y_orientation,
+    )
+
+
+def make_display_axis_orientations_from_home_orientation(
+    home_orientation: str,
+) -> tuple[str, str]:
+    """
+    @brief 根据旧版正放朝向推导新版显示器轴绑定。
+    @param home_orientation 旧版屏幕正放时 Lumina 的朝向。
+    @return tuple[str, str] 返回显示器 X+ 和 Y+ 对应的 Lumina 朝向。
+    @note 旧版算法把 home_orientation 作为显示器 Y+，X+ 使用旧算法中 90 度方向对应的轴。
+    """
+
+    normalized_home_orientation = normalize_lumina_orientation(home_orientation)
+
+    if normalized_home_orientation not in ORIENTATION_TO_STEP:
+        return (
+            "X+",
+            "Y+",
+        )
+
+    display_y_orientation = normalized_home_orientation
+    display_x_step = (ORIENTATION_TO_STEP[normalized_home_orientation] + 1) % 4
+    display_x_orientation = STEP_TO_LUMINA_ORIENTATION[display_x_step]
+
+    return (
+        display_x_orientation,
+        display_y_orientation,
+    )
 
 
 def normalize_device_key(value: object) -> str:
@@ -611,11 +709,18 @@ def make_default_device_config(
     @return 返回默认单设备配置。
     """
 
+    (
+        display_x_orientation,
+        display_y_orientation,
+    ) = make_display_axis_orientations_from_home_orientation("X+")
+
     return LuminaDeviceConfig(
         device_key=normalize_device_key(device_key),
         label=label,
         display_index=1,
         home_orientation="X+",
+        display_x_orientation=display_x_orientation,
+        display_y_orientation=display_y_orientation,
         enabled=False,
         brightness_mode="manual",
         brightness_display_indexes=[],
@@ -649,15 +754,37 @@ def build_device_config_from_data(
     ):
         brightness_display_indexes = [1, 2, 3]
 
+    home_orientation = normalize_lumina_orientation(
+        str(config_data.get("home_orientation", "X+"))
+    )
+    display_x_orientation = config_data.get("display_x_orientation")
+    display_y_orientation = config_data.get("display_y_orientation")
+
+    if display_x_orientation is None or display_y_orientation is None:
+        (
+            normalized_display_x_orientation,
+            normalized_display_y_orientation,
+        ) = make_display_axis_orientations_from_home_orientation(
+            home_orientation
+        )
+    else:
+        (
+            normalized_display_x_orientation,
+            normalized_display_y_orientation,
+        ) = normalize_display_axis_orientation_pair(
+            str(display_x_orientation),
+            str(display_y_orientation),
+        )
+
     return LuminaDeviceConfig(
         device_key=normalize_device_key(
             config_data.get("device_key", fallback_key)
         ),
         label=str(config_data.get("label", fallback_label) or fallback_label),
         display_index=int(config_data.get("display_index", 1)),
-        home_orientation=normalize_lumina_orientation(
-            str(config_data.get("home_orientation", "X+"))
-        ),
+        home_orientation=home_orientation,
+        display_x_orientation=normalized_display_x_orientation,
+        display_y_orientation=normalized_display_y_orientation,
         enabled=bool(config_data.get("enabled", True)),
         brightness_mode=brightness_mode,
         brightness_display_indexes=brightness_display_indexes,
@@ -679,6 +806,8 @@ def convert_device_to_orientation_config(
     return LuminaOrientationConfig(
         display_index=device_config.display_index,
         home_orientation=device_config.home_orientation,
+        display_x_orientation=device_config.display_x_orientation,
+        display_y_orientation=device_config.display_y_orientation,
         enabled=device_config.enabled,
         brightness_mode=device_config.brightness_mode,
         brightness_levels=normalize_brightness_levels(
@@ -702,6 +831,12 @@ def device_config_to_data(
         "display_index": int(device_config.display_index),
         "home_orientation": normalize_lumina_orientation(
             device_config.home_orientation
+        ),
+        "display_x_orientation": normalize_lumina_orientation(
+            device_config.display_x_orientation
+        ),
+        "display_y_orientation": normalize_lumina_orientation(
+            device_config.display_y_orientation
         ),
         "enabled": bool(device_config.enabled),
         "brightness_mode": normalize_brightness_mode(
@@ -842,6 +977,12 @@ def save_config(config_path: Path, config: LuminaOrientationConfig) -> None:
     config_data = {
         "display_index": config.display_index,
         "home_orientation": config.home_orientation,
+        "display_x_orientation": normalize_lumina_orientation(
+            config.display_x_orientation
+        ),
+        "display_y_orientation": normalize_lumina_orientation(
+            config.display_y_orientation
+        ),
         "enabled": config.enabled,
         "brightness_mode": config.brightness_mode,
         "brightness_levels": normalize_brightness_levels(config.brightness_levels),
@@ -856,7 +997,7 @@ def save_config(config_path: Path, config: LuminaOrientationConfig) -> None:
 
 def configure_service(config_path: Path) -> None:
     """
-    @brief 交互式配置 Lumina 绑定的显示器与正放朝向。
+    @brief 交互式配置 Lumina 绑定的显示器与机身轴装配方向。
     @param config_path 配置文件路径。
     @return None
     """
@@ -868,13 +1009,25 @@ def configure_service(config_path: Path) -> None:
     display_index = int(display_index_text)
     display_info = get_display_info_by_index(display_index)
 
-    home_orientation = normalize_lumina_orientation(
-        input("屏幕正放时 Lumina 当前朝向是 X+、X-、Y+ 还是 Y-: ")
+    display_x_orientation = normalize_lumina_orientation(
+        input("显示器横向左到右对应 Lumina 哪个方向（X+/X-/Y+/Y-/Z+/Z-）: ")
+    )
+    display_y_orientation = normalize_lumina_orientation(
+        input("显示器下到上对应 Lumina 哪个方向（X+/X-/Y+/Y-/Z+/Z-）: ")
+    )
+    (
+        display_x_orientation,
+        display_y_orientation,
+    ) = normalize_display_axis_orientation_pair(
+        display_x_orientation,
+        display_y_orientation,
     )
 
     config = LuminaOrientationConfig(
         display_index=display_info.index,
-        home_orientation=home_orientation,
+        home_orientation=display_y_orientation,
+        display_x_orientation=display_x_orientation,
+        display_y_orientation=display_y_orientation,
         enabled=True,
         brightness_mode="manual",
         brightness_levels=[dict(level) for level in DEFAULT_BRIGHTNESS_LEVELS],
@@ -883,7 +1036,8 @@ def configure_service(config_path: Path) -> None:
 
     print(
         f"已保存配置: 显示器 [{display_info.index}] "
-        f"{display_info.device_name}, 正放朝向 {home_orientation}"
+        f"{display_info.device_name}, X+ 对应 {display_x_orientation}, "
+        f"Y+ 对应 {display_y_orientation}"
     )
 
 
@@ -1132,17 +1286,40 @@ def calculate_brightness_level_label(
     return format_brightness_level_range_label(normalized_levels[-1])
 
 
-def calculate_target_orientation(home_orientation: str, current_orientation: str) -> int:
+def calculate_target_orientation(
+    display_x_orientation: str,
+    display_y_orientation: str,
+    current_orientation: str,
+) -> int | None:
     """
-    @brief 根据正放基准朝向和当前朝向计算 Windows 显示方向。
-    @param home_orientation 屏幕正放时 Lumina 的朝向。
+    @brief 根据显示器双轴绑定和当前朝向计算 Windows 显示方向。
+    @param display_x_orientation 显示器横向左到右对应的 Lumina 朝向。
+    @param display_y_orientation 显示器下到上对应的 Lumina 朝向。
     @param current_orientation 当前 Lumina 的朝向。
-    @return 返回 Windows 显示方向常量。
+    @return 返回 Windows 显示方向常量；未绑定轴返回 None。
+    @note 只处理显示器 X/Y 两个绑定轴及其反向，剩余机身轴不会触发旋转。
     """
 
-    home_step = ORIENTATION_TO_STEP[home_orientation]
-    current_step = ORIENTATION_TO_STEP[current_orientation]
-    relative_step = (current_step - home_step) % 4
+    (
+        normalized_display_x_orientation,
+        normalized_display_y_orientation,
+    ) = normalize_display_axis_orientation_pair(
+        display_x_orientation,
+        display_y_orientation,
+    )
+    normalized_current_orientation = normalize_lumina_orientation(
+        current_orientation
+    )
+    orientation_to_step = {
+        normalized_display_y_orientation: 0,
+        normalized_display_x_orientation: 3,
+        get_opposite_lumina_orientation(normalized_display_y_orientation): 2,
+        get_opposite_lumina_orientation(normalized_display_x_orientation): 1,
+    }
+    relative_step = orientation_to_step.get(normalized_current_orientation)
+
+    if relative_step is None:
+        return None
 
     return STEP_TO_WINDOWS_ORIENTATION[relative_step]
 
@@ -1160,14 +1337,16 @@ def apply_lumina_orientation(
     @return None
     """
 
-    if current_orientation not in ORIENTATION_TO_STEP:
-        print(f"收到 {current_orientation}，Z 轴朝向不参与屏幕旋转。")
-        return
-
     target_orientation = calculate_target_orientation(
-        config.home_orientation,
+        config.display_x_orientation,
+        config.display_y_orientation,
         current_orientation,
     )
+
+    if target_orientation is None:
+        print(f"收到 {current_orientation}，未绑定轴不参与屏幕旋转。")
+        return
+
     display_info, result_code = set_display_orientation_by_index(
         config.display_index,
         target_orientation,
@@ -1286,6 +1465,8 @@ class LuminaOrientationWorker:
         enabled: bool,
         brightness_mode: str | None = None,
         brightness_levels: list[dict[str, float | int | None]] | None = None,
+        display_x_orientation: str | None = None,
+        display_y_orientation: str | None = None,
     ) -> None:
         """
         @brief 更新 Lumina 方向服务配置。
@@ -1294,6 +1475,8 @@ class LuminaOrientationWorker:
         @param enabled 是否启用自动旋转。
         @param brightness_mode 亮度调节模式。
         @param brightness_levels 自动亮度档位配置。
+        @param display_x_orientation 显示器横向左到右对应的 Lumina 朝向。
+        @param display_y_orientation 显示器下到上对应的 Lumina 朝向。
         @return None
         """
 
@@ -1307,6 +1490,8 @@ class LuminaOrientationWorker:
             enabled=enabled,
             brightness_mode=brightness_mode,
             brightness_levels=brightness_levels,
+            display_x_orientation=display_x_orientation,
+            display_y_orientation=display_y_orientation,
         )
 
     def update_device_config(
@@ -1317,6 +1502,8 @@ class LuminaOrientationWorker:
         enabled: bool,
         brightness_mode: str | None = None,
         brightness_levels: list[dict[str, float | int | None]] | None = None,
+        display_x_orientation: str | None = None,
+        display_y_orientation: str | None = None,
     ) -> None:
         """
         @brief 更新指定 Lumina 的方向与自动亮度配置。
@@ -1326,6 +1513,8 @@ class LuminaOrientationWorker:
         @param enabled 是否启用自动旋转。
         @param brightness_mode 亮度调节模式。
         @param brightness_levels 自动亮度档位配置。
+        @param display_x_orientation 显示器横向左到右对应的 Lumina 朝向。
+        @param display_y_orientation 显示器下到上对应的 Lumina 朝向。
         @return None
         """
 
@@ -1340,11 +1529,30 @@ class LuminaOrientationWorker:
                     self._make_default_label_locked(),
                 )
 
+            if display_x_orientation is None or display_y_orientation is None:
+                (
+                    normalized_display_x_orientation,
+                    normalized_display_y_orientation,
+                ) = normalize_display_axis_orientation_pair(
+                    old_config.display_x_orientation,
+                    old_config.display_y_orientation,
+                )
+            else:
+                (
+                    normalized_display_x_orientation,
+                    normalized_display_y_orientation,
+                ) = normalize_display_axis_orientation_pair(
+                    display_x_orientation,
+                    display_y_orientation,
+                )
+
             config = LuminaDeviceConfig(
                 device_key=normalized_key,
                 label=old_config.label,
                 display_index=display_index,
                 home_orientation=normalize_lumina_orientation(home_orientation),
+                display_x_orientation=normalized_display_x_orientation,
+                display_y_orientation=normalized_display_y_orientation,
                 enabled=enabled,
                 brightness_mode=normalize_brightness_mode(
                     brightness_mode
@@ -1379,10 +1587,13 @@ class LuminaOrientationWorker:
 
         logger.info(
             "Lumina [%s] 配置已更新: display_index=%s, home_orientation=%s, "
+            "display_x_orientation=%s, display_y_orientation=%s, "
             "enabled=%s, brightness_mode=%s。",
             normalized_key,
             display_index,
             home_orientation,
+            display_x_orientation,
+            display_y_orientation,
             enabled,
             brightness_mode,
         )
@@ -1478,6 +1689,8 @@ class LuminaOrientationWorker:
             enabled,
             config.brightness_mode,
             config.brightness_levels,
+            config.display_x_orientation,
+            config.display_y_orientation,
         )
 
     def get_device_config(self, device_key: str) -> LuminaDeviceConfig:
@@ -1868,7 +2081,13 @@ class LuminaOrientationWorker:
         if not config.enabled:
             return
 
-        if current_orientation not in ORIENTATION_TO_STEP:
+        target_orientation = calculate_target_orientation(
+            config.display_x_orientation,
+            config.display_y_orientation,
+            current_orientation,
+        )
+
+        if target_orientation is None:
             logger.info(
                 "Lumina [%s] 当前朝向 %s 不参与自动旋转。",
                 device_key,
@@ -2367,6 +2586,8 @@ class LuminaOrientationWorker:
             label=config.label,
             display_index=config.display_index,
             home_orientation=config.home_orientation,
+            display_x_orientation=config.display_x_orientation,
+            display_y_orientation=config.display_y_orientation,
             enabled=config.enabled,
             brightness_mode=config.brightness_mode,
             brightness_display_indexes=list(config.brightness_display_indexes),

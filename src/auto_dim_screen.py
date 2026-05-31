@@ -2312,6 +2312,8 @@ def on_brightness_panel_clicked(
         device_key: str,
         display_index: int,
         home_orientation: str,
+        display_x_orientation: str,
+        display_y_orientation: str,
         enabled: bool,
         brightness_mode: str,
         brightness_levels: list[dict[str, float | int | None]],
@@ -2321,6 +2323,8 @@ def on_brightness_panel_clicked(
         @param device_key Lumina 设备 key。
         @param display_index 绑定的显示器索引。
         @param home_orientation 屏幕正放时 Lumina 的朝向。
+        @param display_x_orientation 显示器横向左到右对应的 Lumina 朝向。
+        @param display_y_orientation 显示器下到上对应的 Lumina 朝向。
         @param enabled 是否启用自动旋转。
         @param brightness_mode 亮度调节模式。
         @param brightness_levels 自动亮度档位配置。
@@ -2334,13 +2338,18 @@ def on_brightness_panel_clicked(
             enabled,
             brightness_mode,
             brightness_levels,
+            display_x_orientation,
+            display_y_orientation,
         )
         logger.info(
             "Lumina [%s] 配置已更新: display_index=%s, home_orientation=%s, "
+            "display_x_orientation=%s, display_y_orientation=%s, "
             "enabled=%s, brightness_mode=%s。",
             device_key,
             display_index,
             home_orientation,
+            display_x_orientation,
+            display_y_orientation,
             enabled,
             brightness_mode,
         )

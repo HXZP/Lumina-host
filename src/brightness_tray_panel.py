@@ -435,6 +435,31 @@ def configure_panel_entry_focus(entry_widget: tk.Entry) -> None:
     )
 
 
+def find_next_panel_axis_orientation(
+    base_orientation: str,
+    current_orientation: str,
+) -> str:
+    """
+    @brief 为显示器双轴绑定选择一个不重轴的 Lumina 朝向。
+    @param base_orientation 已选择的显示器轴 Lumina 朝向。
+    @param current_orientation 当前另一个显示器轴 Lumina 朝向。
+    @return str 返回与 base_orientation 不同机身轴的 Lumina 朝向。
+    """
+
+    orientation_choices = ("X+", "X-", "Y+", "Y-", "Z+", "Z-")
+    base_axis = str(base_orientation or "X+")[0]
+    current_axis = str(current_orientation or "Y+")[0]
+
+    if current_axis != base_axis:
+        return str(current_orientation)
+
+    for orientation in orientation_choices:
+        if orientation[0] != base_axis:
+            return orientation
+
+    return "Y+"
+
+
 class BrightnessRangeEditor(tk.Toplevel):
     """
     @brief 自动亮度档位范围编辑浮窗。
@@ -948,7 +973,16 @@ class BrightnessTrayPanelController:
         get_lumina_snapshots: Callable[[], list[object]],
         lumina_display_choices: list[tuple[int, str]],
         update_lumina_device_config: Callable[
-            [str, int, str, bool, str, list[dict[str, float | int | None]]],
+            [
+                str,
+                int,
+                str,
+                str,
+                str,
+                bool,
+                str,
+                list[dict[str, float | int | None]],
+            ],
             None,
         ],
         update_monitor_lumina_binding: Callable[[int, str | None], None],
@@ -1021,7 +1055,16 @@ class BrightnessTrayPanelController:
         get_lumina_snapshots: Callable[[], list[object]],
         lumina_display_choices: list[tuple[int, str]],
         update_lumina_device_config: Callable[
-            [str, int, str, bool, str, list[dict[str, float | int | None]]],
+            [
+                str,
+                int,
+                str,
+                str,
+                str,
+                bool,
+                str,
+                list[dict[str, float | int | None]],
+            ],
             None,
         ],
         update_monitor_lumina_binding: Callable[[int, str | None], None],
@@ -1546,6 +1589,12 @@ class BrightnessTrayPanelController:
             home_orientation_var = tk.StringVar(
                 value=str(getattr(config, "home_orientation", "X+"))
             )
+            display_x_orientation_var = tk.StringVar(
+                value=str(getattr(config, "display_x_orientation", "X+"))
+            )
+            display_y_orientation_var = tk.StringVar(
+                value=str(getattr(config, "display_y_orientation", "Y+"))
+            )
             current_display_index = int(getattr(config, "display_index", 1))
             current_display_label = display_label_by_index.get(
                 current_display_index,
@@ -1674,7 +1723,20 @@ class BrightnessTrayPanelController:
                 )
                 brightness_mode_var.set(next_brightness_mode)
                 lumina_auto_modes[device_key] = next_brightness_mode == "auto"
+                next_display_x_orientation = display_x_orientation_var.get()
+                next_display_y_orientation = display_y_orientation_var.get()
                 next_levels: list[dict[str, float | int | None]] = []
+
+                if next_display_x_orientation[0] == next_display_y_orientation[0]:
+                    display_y_orientation_var.set(
+                        find_next_panel_axis_orientation(
+                            next_display_x_orientation,
+                            next_display_y_orientation,
+                        )
+                    )
+                    next_display_y_orientation = display_y_orientation_var.get()
+
+                home_orientation_var.set(next_display_y_orientation)
 
                 for level_index, level in enumerate(levels):
                     next_levels.append(
@@ -1690,6 +1752,8 @@ class BrightnessTrayPanelController:
                     device_key,
                     display_index,
                     home_orientation_var.get(),
+                    next_display_x_orientation,
+                    next_display_y_orientation,
                     enabled_var.get(),
                     next_brightness_mode,
                     next_levels,
@@ -1734,6 +1798,40 @@ class BrightnessTrayPanelController:
                     levels,
                     on_range_saved,
                 )
+
+            def submit_display_x_orientation(value: str) -> None:
+                """
+                @brief 保存显示器 X+ 轴的 Lumina 方向绑定。
+                @param value 用户选择的 Lumina 方向。
+                @return None
+                """
+
+                if value[0] == display_y_orientation_var.get()[0]:
+                    display_y_orientation_var.set(
+                        find_next_panel_axis_orientation(
+                            value,
+                            display_y_orientation_var.get(),
+                        )
+                    )
+
+                submit_device_config()
+
+            def submit_display_y_orientation(value: str) -> None:
+                """
+                @brief 保存显示器 Y+ 轴的 Lumina 方向绑定。
+                @param value 用户选择的 Lumina 方向。
+                @return None
+                """
+
+                if value[0] == display_x_orientation_var.get()[0]:
+                    display_x_orientation_var.set(
+                        find_next_panel_axis_orientation(
+                            value,
+                            display_x_orientation_var.get(),
+                        )
+                    )
+
+                submit_device_config()
 
             rotate_label = tk.Label(
                 win,
@@ -1795,7 +1893,7 @@ class BrightnessTrayPanelController:
             )
             configure_panel_menu(
                 display_menu,
-                max(14, min(22, lumina_card_width // 12)),
+                max(18, min(26, lumina_card_width // 10)),
             )
             canvas.create_window(
                 card_left + 18,
@@ -1804,20 +1902,71 @@ class BrightnessTrayPanelController:
                 anchor=tk.NW,
             )
 
-            orientation_menu = tk.OptionMenu(
+            display_x_label = tk.Label(
                 win,
-                home_orientation_var,
+                text="屏幕X+",
+                bg=PANEL_SURFACE,
+                fg=TEXT_SECONDARY,
+                font=tiny_font,
+                anchor=tk.W,
+            )
+            canvas.create_window(
+                card_left + 18,
+                card_top + 104,
+                window=display_x_label,
+                anchor=tk.NW,
+            )
+
+            display_x_menu = tk.OptionMenu(
+                win,
+                display_x_orientation_var,
                 "X+",
                 "X-",
                 "Y+",
                 "Y-",
-                command=lambda _value: submit_device_config(),
+                "Z+",
+                "Z-",
+                command=submit_display_x_orientation,
             )
-            configure_panel_menu(orientation_menu, 4)
+            configure_panel_menu(display_x_menu, 3)
             canvas.create_window(
-                card_right - 80,
-                card_top + 74,
-                window=orientation_menu,
+                card_left + 70,
+                card_top + 100,
+                window=display_x_menu,
+                anchor=tk.NW,
+            )
+
+            display_y_label = tk.Label(
+                win,
+                text="屏幕Y+",
+                bg=PANEL_SURFACE,
+                fg=TEXT_SECONDARY,
+                font=tiny_font,
+                anchor=tk.W,
+            )
+            canvas.create_window(
+                card_left + 142,
+                card_top + 104,
+                window=display_y_label,
+                anchor=tk.NW,
+            )
+
+            display_y_menu = tk.OptionMenu(
+                win,
+                display_y_orientation_var,
+                "X+",
+                "X-",
+                "Y+",
+                "Y-",
+                "Z+",
+                "Z-",
+                command=submit_display_y_orientation,
+            )
+            configure_panel_menu(display_y_menu, 3)
+            canvas.create_window(
+                card_left + 194,
+                card_top + 100,
+                window=display_y_menu,
                 anchor=tk.NW,
             )
 
@@ -1831,7 +1980,7 @@ class BrightnessTrayPanelController:
             )
             canvas.create_window(
                 card_left + 18,
-                card_top + 118,
+                card_top + 136,
                 window=brightness_label,
                 anchor=tk.NW,
             )
@@ -1852,7 +2001,7 @@ class BrightnessTrayPanelController:
             )
             canvas.create_window(
                 card_left + 86,
-                card_top + 114,
+                card_top + 132,
                 window=auto_brightness_check,
                 anchor=tk.NW,
             )
@@ -1868,7 +2017,7 @@ class BrightnessTrayPanelController:
             lux_labels[device_key] = lux_label
             canvas.create_window(
                 card_left + 116,
-                card_top + 118,
+                card_top + 136,
                 window=lux_label,
                 anchor=tk.NW,
             )
@@ -1883,15 +2032,15 @@ class BrightnessTrayPanelController:
             )
             canvas.create_window(
                 card_left + 18,
-                card_top + 152,
+                card_top + 166,
                 window=level_title,
                 anchor=tk.NW,
             )
 
             level_labels = ["0档", "1档", "2档", "3档", "4档"]
             level_column_width = max(44, (lumina_card_width - 36) // 5)
-            level_label_y = card_top + 180
-            level_entry_y = card_top + 202
+            level_label_y = card_top + 194
+            level_entry_y = card_top + 216
 
             for level_index, label_text in enumerate(level_labels):
                 label_x = card_left + 18 + level_index * level_column_width
@@ -2524,7 +2673,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 1.1",
+            text="化学制品 | 2.0",
             fill=TEXT_SECONDARY,
             font=tiny_font,
             anchor=tk.SW,
@@ -2700,7 +2849,18 @@ class BrightnessTrayPanelController:
         get_lumina_status: Callable[[], object],
         get_lumina_brightness_level_label: Callable[[], str | None],
         lumina_display_choices: list[tuple[int, str]],
-        update_lumina_config: Callable[[int, str, bool, str, list[dict[str, float | int | None]]], None],
+        update_lumina_config: Callable[
+            [
+                int,
+                str,
+                str,
+                str,
+                bool,
+                str,
+                list[dict[str, float | int | None]],
+            ],
+            None,
+        ],
     ) -> None:
         """
         @brief 请求在 UI 线程中打开或刷新亮度调节面板。
@@ -2776,7 +2936,18 @@ class BrightnessTrayPanelController:
         get_lumina_status: Callable[[], object],
         get_lumina_brightness_level_label: Callable[[], str | None],
         lumina_display_choices: list[tuple[int, str]],
-        update_lumina_config: Callable[[int, str, bool, str, list[dict[str, float | int | None]]], None],
+        update_lumina_config: Callable[
+            [
+                int,
+                str,
+                str,
+                str,
+                bool,
+                str,
+                list[dict[str, float | int | None]],
+            ],
+            None,
+        ],
     ) -> None:
         """
         @brief 在 Tk 线程中创建亮度调节面板控件。
@@ -3042,6 +3213,12 @@ class BrightnessTrayPanelController:
         lumina_orientation_var = tk.StringVar(
             value=str(getattr(lumina_config, "home_orientation", "X+"))
         )
+        display_x_orientation_var = tk.StringVar(
+            value=str(getattr(lumina_config, "display_x_orientation", "X+"))
+        )
+        display_y_orientation_var = tk.StringVar(
+            value=str(getattr(lumina_config, "display_y_orientation", "Y+"))
+        )
         brightness_mode_var = tk.StringVar(
             value=initial_brightness_mode
         )
@@ -3270,10 +3447,22 @@ class BrightnessTrayPanelController:
 
             display_label = lumina_display_var.get()
             display_index = lumina_display_map.get(display_label, current_display_index)
-            next_orientation = lumina_orientation_var.get()
+            next_display_x_orientation = display_x_orientation_var.get()
+            next_display_y_orientation = display_y_orientation_var.get()
             next_enabled = lumina_enabled_var.get()
             next_brightness_mode = brightness_mode_var.get()
             next_levels: list[dict[str, float | int | None]] = []
+
+            if next_display_x_orientation[0] == next_display_y_orientation[0]:
+                display_y_orientation_var.set(
+                    find_next_panel_axis_orientation(
+                        next_display_x_orientation,
+                        next_display_y_orientation,
+                    )
+                )
+                next_display_y_orientation = display_y_orientation_var.get()
+
+            lumina_orientation_var.set(next_display_y_orientation)
 
             for level_index, level in enumerate(brightness_levels):
                 next_levels.append(
@@ -3287,16 +3476,54 @@ class BrightnessTrayPanelController:
             brightness_levels[:] = next_levels
             update_lumina_config(
                 display_index,
-                next_orientation,
+                lumina_orientation_var.get(),
+                next_display_x_orientation,
+                next_display_y_orientation,
                 next_enabled,
                 next_brightness_mode,
                 next_levels,
             )
             lumina_config.display_index = display_index
-            lumina_config.home_orientation = next_orientation
+            lumina_config.home_orientation = lumina_orientation_var.get()
+            lumina_config.display_x_orientation = next_display_x_orientation
+            lumina_config.display_y_orientation = next_display_y_orientation
             lumina_config.enabled = next_enabled
             lumina_config.brightness_mode = next_brightness_mode
             lumina_config.brightness_levels = next_levels
+
+        def submit_display_x_orientation(value: str) -> None:
+            """
+            @brief 保存显示器 X+ 轴的 Lumina 方向绑定。
+            @param value 用户选择的 Lumina 方向。
+            @return None
+            """
+
+            if value[0] == display_y_orientation_var.get()[0]:
+                display_y_orientation_var.set(
+                    find_next_panel_axis_orientation(
+                        value,
+                        display_y_orientation_var.get(),
+                    )
+                )
+
+            submit_lumina_config()
+
+        def submit_display_y_orientation(value: str) -> None:
+            """
+            @brief 保存显示器 Y+ 轴的 Lumina 方向绑定。
+            @param value 用户选择的 Lumina 方向。
+            @return None
+            """
+
+            if value[0] == display_x_orientation_var.get()[0]:
+                display_x_orientation_var.set(
+                    find_next_panel_axis_orientation(
+                        value,
+                        display_x_orientation_var.get(),
+                    )
+                )
+
+            submit_lumina_config()
 
         lumina_title = tk.Label(
             win,
@@ -3413,18 +3640,40 @@ class BrightnessTrayPanelController:
             padx=4,
             pady=3,
         )
-        canvas.create_window(lumina_card_left + 20, row_top + 72, window=display_menu, anchor=tk.NW)
+        canvas.create_window(
+            lumina_card_left + 20,
+            row_top + 72,
+            window=display_menu,
+            anchor=tk.NW,
+        )
 
-        orientation_menu = tk.OptionMenu(
+        display_x_label = tk.Label(
             win,
-            lumina_orientation_var,
+            text="屏幕X+",
+            bg=PANEL_SURFACE,
+            fg=TEXT_SECONDARY,
+            font=small_font,
+            anchor=tk.W,
+        )
+        canvas.create_window(
+            lumina_card_left + 20,
+            row_top + 104,
+            window=display_x_label,
+            anchor=tk.NW,
+        )
+
+        display_x_menu = tk.OptionMenu(
+            win,
+            display_x_orientation_var,
             "X+",
             "X-",
             "Y+",
             "Y-",
-            command=lambda _value: submit_lumina_config(),
+            "Z+",
+            "Z-",
+            command=submit_display_x_orientation,
         )
-        orientation_menu.configure(
+        display_x_menu.configure(
             bg="#151922",
             fg=TEXT_PRIMARY,
             activebackground="#343d4b",
@@ -3432,13 +3681,65 @@ class BrightnessTrayPanelController:
             highlightthickness=0,
             bd=0,
             font=small_font,
-            width=5,
+            width=4,
             padx=4,
             pady=3,
         )
-        canvas.create_window(lumina_card_right - 112, row_top + 72, window=orientation_menu, anchor=tk.NW)
+        canvas.create_window(
+            lumina_card_left + 82,
+            row_top + 100,
+            window=display_x_menu,
+            anchor=tk.NW,
+        )
 
-        auto_brightness_var = tk.BooleanVar(value=brightness_mode_var.get() == "auto")
+        display_y_label = tk.Label(
+            win,
+            text="屏幕Y+",
+            bg=PANEL_SURFACE,
+            fg=TEXT_SECONDARY,
+            font=small_font,
+            anchor=tk.W,
+        )
+        canvas.create_window(
+            lumina_card_left + 168,
+            row_top + 104,
+            window=display_y_label,
+            anchor=tk.NW,
+        )
+
+        display_y_menu = tk.OptionMenu(
+            win,
+            display_y_orientation_var,
+            "X+",
+            "X-",
+            "Y+",
+            "Y-",
+            "Z+",
+            "Z-",
+            command=submit_display_y_orientation,
+        )
+        display_y_menu.configure(
+            bg="#151922",
+            fg=TEXT_PRIMARY,
+            activebackground="#343d4b",
+            activeforeground=TEXT_PRIMARY,
+            highlightthickness=0,
+            bd=0,
+            font=small_font,
+            width=4,
+            padx=4,
+            pady=3,
+        )
+        canvas.create_window(
+            lumina_card_left + 230,
+            row_top + 100,
+            window=display_y_menu,
+            anchor=tk.NW,
+        )
+
+        auto_brightness_var = tk.BooleanVar(
+            value=brightness_mode_var.get() == "auto"
+        )
 
         def submit_brightness_enabled() -> None:
             """
@@ -3462,7 +3763,12 @@ class BrightnessTrayPanelController:
             font=small_font,
             anchor=tk.W,
         )
-        canvas.create_window(lumina_card_left + 20, row_top + 120, window=brightness_label, anchor=tk.NW)
+        canvas.create_window(
+            lumina_card_left + 20,
+            row_top + 136,
+            window=brightness_label,
+            anchor=tk.NW,
+        )
 
         auto_brightness_check = tk.Checkbutton(
             win,
@@ -3478,7 +3784,12 @@ class BrightnessTrayPanelController:
             bd=0,
             highlightthickness=0,
         )
-        canvas.create_window(lumina_card_left + 90, row_top + 116, window=auto_brightness_check, anchor=tk.NW)
+        canvas.create_window(
+            lumina_card_left + 90,
+            row_top + 132,
+            window=auto_brightness_check,
+            anchor=tk.NW,
+        )
 
         auto_brightness_text = format_lumina_brightness_text(
             lumina_status,
@@ -3493,7 +3804,12 @@ class BrightnessTrayPanelController:
             font=small_font,
             anchor=tk.W,
         )
-        canvas.create_window(lumina_card_left + 120, row_top + 120, window=lux_label, anchor=tk.NW)
+        canvas.create_window(
+            lumina_card_left + 120,
+            row_top + 136,
+            window=lux_label,
+            anchor=tk.NW,
+        )
 
         def refresh_lumina_status_labels() -> None:
             """
@@ -3730,13 +4046,13 @@ class BrightnessTrayPanelController:
         )
         canvas.create_window(
             lumina_card_left + 20,
-            row_top + 154,
+            row_top + 166,
             window=level_card_title,
             anchor=tk.NW,
         )
         level_labels = ["0档", "1档", "2档", "3档", "4档"]
-        level_label_y = row_top + 182
-        level_entry_y = row_top + 204
+        level_label_y = row_top + 194
+        level_entry_y = row_top + 216
         level_column_width = 68
 
         for level_index, label_text in enumerate(level_labels):
@@ -4127,7 +4443,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 1.1",
+            text="化学制品 | 2.0",
             fill=TEXT_SECONDARY,
             font=small_font,
             anchor=tk.SW,
