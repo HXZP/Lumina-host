@@ -11,6 +11,8 @@ _APP_DIR = os.path.dirname(_TOOLS_DIR)
 _SRC_DIR = os.path.join(_APP_DIR, "src")
 _APP_ICON = os.path.join(_APP_DIR, "assets", "Lumina.ico")
 _APP_ICON_IMAGE = os.path.join(_APP_DIR, "assets", "Lumina.png")
+_AUTO_DIM_ENABLED_ICON = os.path.join(_APP_DIR, "assets", "月亮-亮.png")
+_AUTO_DIM_DISABLED_ICON = os.path.join(_APP_DIR, "assets", "月亮-暗.png")
 
 auto_dim_analysis = Analysis(
     [os.path.join(_SRC_DIR, "auto_dim_screen.py")],
@@ -18,6 +20,8 @@ auto_dim_analysis = Analysis(
     binaries=[],
     datas=[
         (_APP_ICON_IMAGE, "assets"),
+        (_AUTO_DIM_ENABLED_ICON, "assets"),
+        (_AUTO_DIM_DISABLED_ICON, "assets"),
     ],
     hiddenimports=collect_submodules("pystray") + [
         "brightness_tray_panel",

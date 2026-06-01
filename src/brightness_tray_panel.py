@@ -29,6 +29,9 @@ TEXT_PRIMARY = "#f4f7fb"
 TEXT_SECONDARY = "#aab4c3"
 ACCENT_COLOR = "#ffc43d"
 APPLICATION_ICON_RELATIVE_PATH = os.path.join("assets", "Lumina.png")
+AUTO_DIM_ENABLED_ICON_RELATIVE_PATH = os.path.join("assets", "月亮-亮.png")
+AUTO_DIM_DISABLED_ICON_RELATIVE_PATH = os.path.join("assets", "月亮-暗.png")
+AUTO_DIM_ICON_SUBSAMPLE = 8
 SOURCE_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 APPLICATION_DIRECTORY = os.path.dirname(SOURCE_DIRECTORY)
 
@@ -198,6 +201,29 @@ def get_application_resource_path(relative_path: str) -> str:
         base_directory,
         relative_path,
     )
+
+
+def load_subsampled_photo_image(
+    relative_path: str,
+    subsample_factor: int,
+) -> tk.PhotoImage:
+    """
+    @brief 加载并按整数比例缩小 Tk 图片资源。
+    @param relative_path 相对应用根目录的图片资源路径。
+    @param subsample_factor 图片缩小倍数。
+    @return tk.PhotoImage 返回可用于 Canvas 的图片对象。
+    """
+
+    image_path = get_application_resource_path(relative_path)
+    photo_image = tk.PhotoImage(file=image_path)
+
+    if subsample_factor > 1:
+        photo_image = photo_image.subsample(
+            subsample_factor,
+            subsample_factor,
+        )
+
+    return photo_image
 
 
 def get_default_panel_brightness_levels() -> list[dict[str, float | int | None]]:
@@ -900,6 +926,8 @@ class BrightnessTrayPanelController:
         self._drag_start_y = 0
         self._last_sent_values: dict[int, int] = {}
         self._icon_photo: tk.PhotoImage | None = None
+        self._auto_dim_enabled_photo: tk.PhotoImage | None = None
+        self._auto_dim_disabled_photo: tk.PhotoImage | None = None
         self._range_editor_window: BrightnessRangeEditor | None = None
         self._panel_position: tuple[int, int] | None = None
 
@@ -957,6 +985,34 @@ class BrightnessTrayPanelController:
             )
         except tk.TclError:
             return
+
+    def _get_auto_dim_icon_photo(
+        self,
+        is_active: bool,
+    ) -> tk.PhotoImage:
+        """
+        @brief 获取自动暗屏按钮当前状态对应的月亮图片。
+        @param is_active 自动暗屏是否处于启用状态。
+        @return tk.PhotoImage 返回启用或暂停状态对应的月亮图片对象。
+        @note Tk 需要持有 PhotoImage 引用，否则 Canvas 中的图片会被回收。
+        """
+
+        if self._auto_dim_enabled_photo is None:
+            self._auto_dim_enabled_photo = load_subsampled_photo_image(
+                AUTO_DIM_ENABLED_ICON_RELATIVE_PATH,
+                AUTO_DIM_ICON_SUBSAMPLE,
+            )
+
+        if self._auto_dim_disabled_photo is None:
+            self._auto_dim_disabled_photo = load_subsampled_photo_image(
+                AUTO_DIM_DISABLED_ICON_RELATIVE_PATH,
+                AUTO_DIM_ICON_SUBSAMPLE,
+            )
+
+        if is_active:
+            return self._auto_dim_enabled_photo
+
+        return self._auto_dim_disabled_photo
 
     def show_multi_lumina_brightness_panel(
         self,
@@ -2385,8 +2441,6 @@ class BrightnessTrayPanelController:
         close_center_x = panel_width // 2
         autostart_center_x = panel_width // 2 + 66
         idle_delay_entry_x = auto_center_x - bottom_button_radius - 42
-        auto_icon_color = ACCENT_COLOR if is_auto_dim_active() else TEXT_SECONDARY
-
         def create_button_circle(
             center_x: int,
             center_y: int,
@@ -2478,23 +2532,10 @@ class BrightnessTrayPanelController:
 
         auto_circle = create_button_circle(auto_center_x, bottom_center_y)
         auto_icon_ids = [
-            canvas.create_oval(
-                auto_center_x - 9,
-                bottom_center_y - 10,
-                auto_center_x + 9,
-                bottom_center_y + 10,
-                outline=auto_icon_color,
-                fill=auto_icon_color,
-                width=2,
-            ),
-            canvas.create_oval(
-                auto_center_x - 2,
-                bottom_center_y - 12,
-                auto_center_x + 13,
-                bottom_center_y + 7,
-                outline="#2a313d",
-                fill="#2a313d",
-                width=2,
+            canvas.create_image(
+                auto_center_x,
+                bottom_center_y,
+                image=self._get_auto_dim_icon_photo(is_auto_dim_active()),
             ),
         ]
 
@@ -2544,14 +2585,15 @@ class BrightnessTrayPanelController:
 
         def update_auto_button_state(is_active: bool) -> None:
             """
-            @brief 根据自动调光启用状态刷新月亮图案颜色。
+            @brief 根据自动调光启用状态刷新月亮图片。
             @param is_active 自动调光是否启用。
             @return None
             """
 
-            icon_color = ACCENT_COLOR if is_active else TEXT_SECONDARY
-            set_icon_items_color([auto_icon_ids[0]], icon_color)
-            set_icon_items_color([auto_icon_ids[1]], "#2a313d")
+            canvas.itemconfigure(
+                auto_icon_ids[0],
+                image=self._get_auto_dim_icon_photo(is_active),
+            )
 
         def update_autostart_button_state(is_active: bool) -> None:
             """
@@ -2673,7 +2715,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 2.0",
+            text="化学制品 | 2.2",
             fill=TEXT_SECONDARY,
             font=tiny_font,
             anchor=tk.SW,
@@ -4195,7 +4237,7 @@ class BrightnessTrayPanelController:
             """
             @brief 切换底部图案按钮悬停样式。
             @param circle_id 圆形底座对象标识。
-            @param icon_ids 图案线条对象标识列表。
+            @param icon_ids 图案对象标识列表。
             @param icon_color 非悬停状态下的图案颜色。
             @param is_hovered 是否处于悬停状态。
             @return None
@@ -4222,60 +4264,36 @@ class BrightnessTrayPanelController:
                 except tk.TclError:
                     pass
 
+            is_image_icon = circle_id == auto_circle
+
             if is_hovered:
                 canvas.configure(cursor="hand2")
                 canvas.itemconfigure(circle_id, fill="#343d4b")
 
-                for icon_id in icon_ids:
-                    configure_icon_color(icon_id, "#ffffff")
-
-                if circle_id == auto_circle and len(icon_ids) > 1:
-                    canvas.itemconfigure(
-                        icon_ids[1],
-                        fill="#343d4b",
-                        outline="#343d4b",
-                    )
+                if not is_image_icon:
+                    for icon_id in icon_ids:
+                        configure_icon_color(icon_id, "#ffffff")
 
                 return
 
             canvas.configure(cursor="")
             canvas.itemconfigure(circle_id, fill="#2a313d")
 
-            for icon_id in icon_ids:
-                configure_icon_color(icon_id, icon_color)
-
-            if circle_id == auto_circle and len(icon_ids) > 1:
-                canvas.itemconfigure(
-                    icon_ids[1],
-                    fill="#2a313d",
-                    outline="#2a313d",
-                )
+            if not is_image_icon:
+                for icon_id in icon_ids:
+                    configure_icon_color(icon_id, icon_color)
 
         auto_center_x = panel_width // 2 - 66
         close_center_x = panel_width // 2
         autostart_center_x = panel_width // 2 + 66
         idle_delay_entry_x = auto_center_x - bottom_button_radius - 42
-        auto_icon_color = ACCENT_COLOR if is_auto_dim_active() else TEXT_SECONDARY
 
         auto_circle = create_button_circle(auto_center_x, bottom_center_y)
         auto_icon_ids = [
-            canvas.create_oval(
-                auto_center_x - 9,
-                bottom_center_y - 10,
-                auto_center_x + 9,
-                bottom_center_y + 10,
-                outline=auto_icon_color,
-                fill=auto_icon_color,
-                width=2,
-            ),
-            canvas.create_oval(
-                auto_center_x - 2,
-                bottom_center_y - 12,
-                auto_center_x + 13,
-                bottom_center_y + 7,
-                outline="#2a313d",
-                fill="#2a313d",
-                width=2,
+            canvas.create_image(
+                auto_center_x,
+                bottom_center_y,
+                image=self._get_auto_dim_icon_photo(is_auto_dim_active()),
             ),
         ]
 
@@ -4322,31 +4340,15 @@ class BrightnessTrayPanelController:
 
         def update_auto_button_state(is_active: bool) -> None:
             """
-            @brief 根据自动调光启用状态刷新月亮图案颜色。
+            @brief 根据自动调光启用状态刷新月亮图片。
             @param is_active 自动调光是否启用。
             @return None
             """
 
-            icon_color = ACCENT_COLOR if is_active else TEXT_SECONDARY
-
-            for icon_index, icon_id in enumerate(auto_icon_ids):
-                if icon_index == 1:
-                    canvas.itemconfigure(
-                        icon_id,
-                        fill="#2a313d",
-                        outline="#2a313d",
-                    )
-                    continue
-
-                try:
-                    canvas.itemconfigure(icon_id, fill=icon_color)
-                except tk.TclError:
-                    pass
-
-                try:
-                    canvas.itemconfigure(icon_id, outline=icon_color)
-                except tk.TclError:
-                    pass
+            canvas.itemconfigure(
+                auto_icon_ids[0],
+                image=self._get_auto_dim_icon_photo(is_active),
+            )
 
         def update_autostart_button_state(is_active: bool) -> None:
             """
@@ -4443,7 +4445,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 2.0",
+            text="化学制品 | 2.2",
             fill=TEXT_SECONDARY,
             font=small_font,
             anchor=tk.SW,
