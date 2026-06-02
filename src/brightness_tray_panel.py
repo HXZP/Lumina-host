@@ -1537,6 +1537,23 @@ class BrightnessTrayPanelController:
                 return
 
             left, top, right, bottom = text_bounds
+            tooltip_width = right - left
+            tooltip_height = bottom - top
+            center_x = max(
+                20 + tooltip_width // 2,
+                min(panel_width - 20 - tooltip_width // 2, center_x),
+            )
+            center_y = max(
+                20 + tooltip_height // 2,
+                min(panel_height - 20 - tooltip_height // 2, center_y),
+            )
+            canvas.coords(tooltip_label, center_x, center_y)
+            text_bounds = canvas.bbox(tooltip_label)
+
+            if text_bounds is None:
+                return
+
+            left, top, right, bottom = text_bounds
             canvas.coords(
                 tooltip_rect,
                 left - 8,
@@ -1544,7 +1561,8 @@ class BrightnessTrayPanelController:
                 right + 8,
                 bottom + 5,
             )
-            canvas.itemconfigure(tooltip_rect, state=tk.NORMAL)
+            canvas.itemconfigure(tooltip_rect, state=tk.DISABLED)
+            canvas.itemconfigure(tooltip_label, state=tk.DISABLED)
             canvas.tag_raise(tooltip_rect)
             canvas.tag_raise(tooltip_label)
 
@@ -2436,6 +2454,7 @@ class BrightnessTrayPanelController:
             update_idle_delay_seconds(delay_seconds)
 
         bottom_center_y = panel_height - 58
+        bottom_button_tooltip_y = bottom_center_y + 36
         bottom_button_radius = 18
         auto_center_x = panel_width // 2 - 66
         close_center_x = panel_width // 2
@@ -2511,7 +2530,7 @@ class BrightnessTrayPanelController:
                 show_tooltip(
                     tooltip_text,
                     tooltip_center_x,
-                    bottom_center_y - 44,
+                    bottom_button_tooltip_y,
                 )
 
             def on_button_leave(event: tk.Event) -> None:
@@ -2651,7 +2670,7 @@ class BrightnessTrayPanelController:
             lambda _event: show_tooltip(
                 "空闲时间阈值（秒）",
                 idle_delay_entry_x + 16,
-                bottom_center_y - 44,
+                bottom_button_tooltip_y,
             ),
         )
         idle_delay_entry.bind("<Leave>", lambda _event: hide_tooltip())
@@ -2715,7 +2734,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 2.2",
+            text="化学制品 | 2.3",
             fill=TEXT_SECONDARY,
             font=tiny_font,
             anchor=tk.SW,
@@ -2732,8 +2751,8 @@ class BrightnessTrayPanelController:
             canvas.configure(cursor="hand2")
             show_tooltip(
                 "1324146673@qq.com",
-                content_left + 74,
-                bottom_center_y - 44,
+                content_left + 88,
+                panel_height - 14,
             )
 
         def on_author_leave(event: tk.Event) -> None:
@@ -3955,6 +3974,23 @@ class BrightnessTrayPanelController:
                 return
 
             left, top, right, bottom = text_bounds
+            tooltip_width = right - left
+            tooltip_height = bottom - top
+            center_x = max(
+                20 + tooltip_width // 2,
+                min(panel_width - 20 - tooltip_width // 2, center_x),
+            )
+            center_y = max(
+                20 + tooltip_height // 2,
+                min(panel_height - 20 - tooltip_height // 2, center_y),
+            )
+            canvas.coords(tooltip_label, center_x, center_y)
+            text_bounds = canvas.bbox(tooltip_label)
+
+            if text_bounds is None:
+                return
+
+            left, top, right, bottom = text_bounds
             canvas.coords(
                 tooltip_rect,
                 left - 8,
@@ -3962,7 +3998,8 @@ class BrightnessTrayPanelController:
                 right + 8,
                 bottom + 5,
             )
-            canvas.itemconfigure(tooltip_rect, state=tk.NORMAL)
+            canvas.itemconfigure(tooltip_rect, state=tk.DISABLED)
+            canvas.itemconfigure(tooltip_label, state=tk.DISABLED)
             canvas.tag_raise(tooltip_rect)
             canvas.tag_raise(tooltip_label)
 
@@ -4158,6 +4195,7 @@ class BrightnessTrayPanelController:
             )
 
         bottom_center_y = panel_height - 58
+        bottom_button_tooltip_y = bottom_center_y + 36
 
         def bind_icon_button(
             item_ids: list[int],
@@ -4188,7 +4226,7 @@ class BrightnessTrayPanelController:
                 show_tooltip(
                     tooltip_text,
                     tooltip_center_x,
-                    bottom_center_y - 44,
+                    bottom_button_tooltip_y,
                 )
 
             def on_button_leave(event: tk.Event) -> None:
@@ -4416,7 +4454,7 @@ class BrightnessTrayPanelController:
             lambda _event: show_tooltip(
                 "空闲时间阈值（秒）",
                 idle_delay_entry_x + 16,
-                bottom_center_y - 44,
+                bottom_button_tooltip_y,
             ),
         )
         idle_delay_entry.bind("<Leave>", lambda _event: hide_tooltip())
@@ -4445,7 +4483,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 2.2",
+            text="化学制品 | 2.3",
             fill=TEXT_SECONDARY,
             font=small_font,
             anchor=tk.SW,
@@ -4462,8 +4500,8 @@ class BrightnessTrayPanelController:
             canvas.configure(cursor="hand2")
             show_tooltip(
                 "1324146673@qq.com",
-                content_left + 74,
-                bottom_center_y - 44,
+                content_left + 88,
+                panel_height - 14,
             )
 
         def on_author_leave(event: tk.Event) -> None:
