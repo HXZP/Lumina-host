@@ -20,6 +20,7 @@ import time
 import winreg
 from ctypes import wintypes
 from dataclasses import dataclass, field
+from typing import Callable
 
 from monitor_brightness import (
     MonitorBrightnessInfo,
@@ -828,14 +829,20 @@ def get_transition_tick_interval(
     return DEFAULT_TRANSITION_TICK_SECONDS
 
 
-def create_runtime_control_state() -> RuntimeControlState:
+def create_runtime_control_state(
+    auto_dim_enabled: bool = True,
+) -> RuntimeControlState:
     """
     @brief 创建并初始化托盘模式所需的运行时控制状态。
+    @param auto_dim_enabled 自动暗屏初始启用状态。
     @return RuntimeControlState 初始化后的运行时控制状态对象。
     """
 
     runtime_control_state = RuntimeControlState()
-    runtime_control_state.auto_dim_enabled_event.set()
+
+    if auto_dim_enabled:
+        runtime_control_state.auto_dim_enabled_event.set()
+
     return runtime_control_state
 
 
@@ -2125,6 +2132,21 @@ def update_tray_icon_title(
         tray_icon.title = f"{APPLICATION_NAME}：自动调光已暂停"
 
 
+def get_tray_icon_title(
+    runtime_control_state: RuntimeControlState,
+) -> str:
+    """
+    @brief 根据当前启停状态生成托盘图标标题。
+    @param runtime_control_state 运行时控制状态对象。
+    @return str 返回托盘标题文本。
+    """
+
+    if is_auto_dim_enabled(runtime_control_state):
+        return f"{APPLICATION_NAME}：自动调光已启用"
+
+    return f"{APPLICATION_NAME}：自动调光已暂停"
+
+
 def get_tray_auto_dim_checked(
     item: object,
     runtime_control_state: RuntimeControlState,
@@ -2144,12 +2166,14 @@ def on_toggle_auto_dim_clicked(
     tray_icon: object,
     item: object,
     runtime_control_state: RuntimeControlState,
+    update_auto_dim_enabled: Callable[[bool], None],
 ) -> None:
     """
     @brief 处理托盘菜单中自动调光开关项的点击事件。
     @param tray_icon 托盘图标对象。
     @param item 托盘菜单项对象。
     @param runtime_control_state 运行时控制状态对象。
+    @param update_auto_dim_enabled 保存自动暗屏启用状态的回调。
     @return None
     """
 
@@ -2159,6 +2183,7 @@ def on_toggle_auto_dim_clicked(
         runtime_control_state,
         next_enabled_state,
     )
+    update_auto_dim_enabled(next_enabled_state)
     update_tray_icon_title(
         tray_icon,
         runtime_control_state,
@@ -2248,6 +2273,7 @@ def on_brightness_panel_clicked(
             runtime_control_state,
             next_enabled_state,
         )
+        lumina_worker.update_auto_dim_enabled(next_enabled_state)
         update_tray_icon_title(
             tray_icon,
             runtime_control_state,
@@ -2522,6 +2548,7 @@ def create_tray_menu(
             functools.partial(
                 on_toggle_auto_dim_clicked,
                 runtime_control_state=runtime_control_state,
+                update_auto_dim_enabled=lumina_worker.update_auto_dim_enabled,
             ),
             checked=functools.partial(
                 get_tray_auto_dim_checked,
@@ -2580,7 +2607,7 @@ def run_tray_icon_loop(
     tray_icon = pystray.Icon(
         APPLICATION_NAME,
         create_tray_icon_image(),
-        f"{APPLICATION_NAME}：自动调光已启用",
+        get_tray_icon_title(runtime_control_state),
         create_tray_menu(
             runtime_control_state,
             arguments,
@@ -2652,9 +2679,11 @@ def run_with_system_tray(
             "及 Python 安装是否完整。"
         ) from import_error
 
-    runtime_control_state = create_runtime_control_state()
-    panel_controller = TrayPanel()
     lumina_worker = LuminaOrientationWorker()
+    runtime_control_state = create_runtime_control_state(
+        lumina_worker.get_auto_dim_enabled()
+    )
+    panel_controller = TrayPanel()
     panel_controller.start()
     lumina_worker.start()
     logger.info("托盘模式启动，Lumina worker 与亮度面板线程已启动。")

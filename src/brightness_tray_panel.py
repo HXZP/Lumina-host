@@ -461,6 +461,79 @@ def configure_panel_entry_focus(entry_widget: tk.Entry) -> None:
     )
 
 
+def hide_widget_tooltip(
+    tooltip_window: tk.Toplevel | None,
+) -> None:
+    """
+    @brief 隐藏并销毁独立控件提示窗口。
+    @param tooltip_window 需要销毁的提示窗口；为 None 时直接返回。
+    @return None
+    """
+
+    if tooltip_window is None:
+        return
+
+    try:
+        if tooltip_window.winfo_exists():
+            tooltip_window.destroy()
+    except tk.TclError:
+        pass
+
+
+def show_widget_tooltip_below(
+    parent_window: tk.Toplevel,
+    target_widget: tk.Widget,
+    tooltip_text: str,
+    current_tooltip_window: tk.Toplevel | None,
+) -> tk.Toplevel:
+    """
+    @brief 在指定控件下方显示独立悬浮提示。
+    @param parent_window 父级窗口。
+    @param target_widget 触发提示的控件。
+    @param tooltip_text 提示文本。
+    @param current_tooltip_window 当前已显示的提示窗口；为 None 时表示没有旧窗口。
+    @return tk.Toplevel 返回新的提示窗口。
+    @note 独立窗口不会被 Canvas 或嵌入控件层级遮挡，适合 Entry 下方提示。
+    """
+
+    hide_widget_tooltip(current_tooltip_window)
+    parent_window.update_idletasks()
+    target_widget.update_idletasks()
+    tooltip_window = tk.Toplevel(parent_window)
+    tooltip_window.overrideredirect(True)
+    tooltip_window.configure(bg=PANEL_BORDER)
+    tooltip_window.attributes("-topmost", True)
+    tooltip_window.transient(parent_window)
+
+    tooltip_label = tk.Label(
+        tooltip_window,
+        text=tooltip_text,
+        bg="#343d4b",
+        fg=TEXT_PRIMARY,
+        font=tkfont.Font(family="Microsoft YaHei UI", size=9),
+        bd=0,
+        padx=8,
+        pady=4,
+    )
+    tooltip_label.pack(padx=1, pady=1)
+    tooltip_window.update_idletasks()
+
+    tooltip_width = tooltip_window.winfo_reqwidth()
+    parent_left = parent_window.winfo_rootx()
+    parent_width = parent_window.winfo_width()
+    widget_left = target_widget.winfo_rootx()
+    widget_bottom = target_widget.winfo_rooty() + target_widget.winfo_height()
+    tooltip_left = widget_left + target_widget.winfo_width() // 2 - tooltip_width // 2
+    tooltip_top = widget_bottom + 6
+
+    tooltip_left = max(
+        parent_left + 12,
+        min(parent_left + parent_width - tooltip_width - 12, tooltip_left),
+    )
+    tooltip_window.geometry(f"+{tooltip_left}+{tooltip_top}")
+    return tooltip_window
+
+
 def find_next_panel_axis_orientation(
     base_orientation: str,
     current_orientation: str,
@@ -2382,6 +2455,7 @@ class BrightnessTrayPanelController:
 
         idle_delay_var = tk.StringVar(value=f"{get_idle_delay_seconds():.1f}")
         idle_delay_submit_after_id: str | None = None
+        idle_delay_tooltip_window: tk.Toplevel | None = None
 
         def cancel_idle_delay_later() -> None:
             """
@@ -2453,6 +2527,36 @@ class BrightnessTrayPanelController:
             idle_delay_var.set(f"{delay_seconds:g}")
             update_idle_delay_seconds(delay_seconds)
 
+        def show_idle_delay_tooltip(event: tk.Event) -> None:
+            """
+            @brief 在空闲阈值输入框下方显示说明提示。
+            @param event Tk 鼠标事件。
+            @return None
+            """
+
+            nonlocal idle_delay_tooltip_window
+
+            del event
+            idle_delay_tooltip_window = show_widget_tooltip_below(
+                win,
+                idle_delay_entry,
+                "空闲时间阈值（秒）",
+                idle_delay_tooltip_window,
+            )
+
+        def hide_idle_delay_tooltip(event: tk.Event) -> None:
+            """
+            @brief 隐藏空闲阈值输入框说明提示。
+            @param event Tk 鼠标事件。
+            @return None
+            """
+
+            nonlocal idle_delay_tooltip_window
+
+            del event
+            hide_widget_tooltip(idle_delay_tooltip_window)
+            idle_delay_tooltip_window = None
+
         bottom_center_y = panel_height - 58
         bottom_button_tooltip_y = bottom_center_y + 36
         bottom_button_radius = 18
@@ -2460,6 +2564,7 @@ class BrightnessTrayPanelController:
         close_center_x = panel_width // 2
         autostart_center_x = panel_width // 2 + 66
         idle_delay_entry_x = auto_center_x - bottom_button_radius - 42
+
         def create_button_circle(
             center_x: int,
             center_y: int,
@@ -2667,13 +2772,9 @@ class BrightnessTrayPanelController:
         )
         idle_delay_entry.bind(
             "<Enter>",
-            lambda _event: show_tooltip(
-                "空闲时间阈值（秒）",
-                idle_delay_entry_x + 16,
-                bottom_button_tooltip_y,
-            ),
+            show_idle_delay_tooltip,
         )
-        idle_delay_entry.bind("<Leave>", lambda _event: hide_tooltip())
+        idle_delay_entry.bind("<Leave>", hide_idle_delay_tooltip)
         canvas.create_window(
             idle_delay_entry_x,
             bottom_center_y,
@@ -2734,7 +2835,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 2.3",
+            text="化学制品 | 2.4",
             fill=TEXT_SECONDARY,
             font=tiny_font,
             anchor=tk.SW,
@@ -3429,6 +3530,7 @@ class BrightnessTrayPanelController:
 
         idle_delay_var = tk.StringVar(value=f"{get_idle_delay_seconds():.1f}")
         idle_delay_submit_after_id: str | None = None
+        idle_delay_tooltip_window: tk.Toplevel | None = None
 
         def cancel_idle_delay_later() -> None:
             """
@@ -3499,6 +3601,36 @@ class BrightnessTrayPanelController:
 
             idle_delay_var.set(f"{delay_seconds:g}")
             update_idle_delay_seconds(delay_seconds)
+
+        def show_idle_delay_tooltip(event: tk.Event) -> None:
+            """
+            @brief 在空闲阈值输入框下方显示说明提示。
+            @param event Tk 鼠标事件。
+            @return None
+            """
+
+            nonlocal idle_delay_tooltip_window
+
+            del event
+            idle_delay_tooltip_window = show_widget_tooltip_below(
+                win,
+                idle_delay_entry,
+                "空闲时间阈值（秒）",
+                idle_delay_tooltip_window,
+            )
+
+        def hide_idle_delay_tooltip(event: tk.Event) -> None:
+            """
+            @brief 隐藏空闲阈值输入框说明提示。
+            @param event Tk 鼠标事件。
+            @return None
+            """
+
+            nonlocal idle_delay_tooltip_window
+
+            del event
+            hide_widget_tooltip(idle_delay_tooltip_window)
+            idle_delay_tooltip_window = None
 
         def submit_lumina_config() -> None:
             """
@@ -4451,13 +4583,9 @@ class BrightnessTrayPanelController:
         )
         idle_delay_entry.bind(
             "<Enter>",
-            lambda _event: show_tooltip(
-                "空闲时间阈值（秒）",
-                idle_delay_entry_x + 16,
-                bottom_button_tooltip_y,
-            ),
+            show_idle_delay_tooltip,
         )
-        idle_delay_entry.bind("<Leave>", lambda _event: hide_tooltip())
+        idle_delay_entry.bind("<Leave>", hide_idle_delay_tooltip)
         canvas.create_window(
             idle_delay_entry_x,
             bottom_center_y,
@@ -4483,7 +4611,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 2.3",
+            text="化学制品 | 2.4",
             fill=TEXT_SECONDARY,
             font=small_font,
             anchor=tk.SW,

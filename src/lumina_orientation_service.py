@@ -152,6 +152,7 @@ class LuminaMultiConfig:
     """
 
     devices: list[LuminaDeviceConfig]
+    auto_dim_enabled: bool = True
 
 
 @dataclass
@@ -877,7 +878,12 @@ def load_multi_config(config_path: Path) -> LuminaMultiConfig:
             )
 
         if devices:
-            return LuminaMultiConfig(devices=devices)
+            return LuminaMultiConfig(
+                devices=devices,
+                auto_dim_enabled=bool(
+                    config_data.get("auto_dim_enabled", True)
+                ),
+            )
 
     if not isinstance(config_data, dict):
         raise ValueError("Lumina 配置文件格式无效。")
@@ -889,7 +895,8 @@ def load_multi_config(config_path: Path) -> LuminaMultiConfig:
                 "default",
                 "Lumina#1",
             )
-        ]
+        ],
+        auto_dim_enabled=bool(config_data.get("auto_dim_enabled", True)),
     )
 
 
@@ -905,7 +912,8 @@ def load_multi_config_or_default(config_path: Path) -> LuminaMultiConfig:
         return LuminaMultiConfig(
             devices=[
                 make_default_device_config(),
-            ]
+            ],
+            auto_dim_enabled=True,
         )
 
     try:
@@ -915,7 +923,8 @@ def load_multi_config_or_default(config_path: Path) -> LuminaMultiConfig:
         return LuminaMultiConfig(
             devices=[
                 make_default_device_config(),
-            ]
+            ],
+            auto_dim_enabled=True,
         )
 
 
@@ -930,6 +939,7 @@ def save_multi_config(config_path: Path, config: LuminaMultiConfig) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_data = {
         "version": 2,
+        "auto_dim_enabled": bool(config.auto_dim_enabled),
         "devices": [
             device_config_to_data(device_config)
             for device_config in config.devices
@@ -1457,6 +1467,31 @@ class LuminaOrientationWorker:
             return convert_device_to_orientation_config(
                 self._get_primary_config_locked()
             )
+
+    def get_auto_dim_enabled(self) -> bool:
+        """
+        @brief 获取自动暗屏开关的持久化状态。
+        @return bool 返回 True 表示自动暗屏应在启动后启用。
+        """
+
+        with self._lock:
+            return bool(self._multi_config.auto_dim_enabled)
+
+    def update_auto_dim_enabled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """
+        @brief 更新并保存自动暗屏开关的持久化状态。
+        @param enabled 是否启用自动暗屏。
+        @return None
+        """
+
+        with self._lock:
+            self._multi_config.auto_dim_enabled = bool(enabled)
+            save_config_data = self._copy_multi_config_locked()
+
+        save_multi_config(self._config_path, save_config_data)
 
     def update_config(
         self,
@@ -2555,7 +2590,8 @@ class LuminaOrientationWorker:
             devices=[
                 self._copy_device_config(config)
                 for config in self._get_sorted_configs_locked()
-            ]
+            ],
+            auto_dim_enabled=bool(self._multi_config.auto_dim_enabled),
         )
 
     def _copy_multi_config_locked(self) -> LuminaMultiConfig:
@@ -2568,7 +2604,8 @@ class LuminaOrientationWorker:
             devices=[
                 self._copy_device_config(config)
                 for config in self._get_sorted_configs_locked()
-            ]
+            ],
+            auto_dim_enabled=bool(self._multi_config.auto_dim_enabled),
         )
 
     @staticmethod
