@@ -1115,6 +1115,7 @@ class BrightnessTrayPanelController:
             None,
         ],
         update_monitor_lumina_binding: Callable[[int, str | None], None],
+        update_lumina_led_state: Callable[[str, bool], None],
     ) -> None:
         """
         @brief 请求在 UI 线程中打开多 Lumina 亮度调节面板。
@@ -1132,6 +1133,7 @@ class BrightnessTrayPanelController:
         @param lumina_display_choices Lumina 可绑定显示器列表。
         @param update_lumina_device_config 更新指定 Lumina 配置的回调。
         @param update_monitor_lumina_binding 更新显示器自动亮度绑定的回调。
+        @param update_lumina_led_state 更新指定 Lumina LED 开关状态的回调。
         @return None
         """
 
@@ -1160,6 +1162,7 @@ class BrightnessTrayPanelController:
                     lumina_display_choices,
                     update_lumina_device_config,
                     update_monitor_lumina_binding,
+                    update_lumina_led_state,
                 )
             except Exception as error:
                 messagebox.showerror(
@@ -1197,6 +1200,7 @@ class BrightnessTrayPanelController:
             None,
         ],
         update_monitor_lumina_binding: Callable[[int, str | None], None],
+        update_lumina_led_state: Callable[[str, bool], None],
     ) -> None:
         """
         @brief 在 Tk 线程中创建多 Lumina 亮度调节窗口。
@@ -1214,6 +1218,7 @@ class BrightnessTrayPanelController:
         @param lumina_display_choices Lumina 可绑定显示器列表。
         @param update_lumina_device_config 更新指定 Lumina 配置的回调。
         @param update_monitor_lumina_binding 更新显示器自动亮度绑定的回调。
+        @param update_lumina_led_state 更新指定 Lumina LED 开关状态的回调。
         @return None
         """
 
@@ -1332,7 +1337,7 @@ class BrightnessTrayPanelController:
         monitor_scale_windows: dict[int, int] = {}
         monitor_binding_keys: dict[int, str] = {}
         lumina_auto_modes: dict[str, bool] = {}
-        status_labels: dict[str, tk.Label] = {}
+        led_indicator_items: dict[str, tuple[int, int]] = {}
         orientation_labels: dict[str, tk.Label] = {}
         lux_labels: dict[str, tk.Label] = {}
         bottom_status_label: tk.Label | None = None
@@ -1493,17 +1498,19 @@ class BrightnessTrayPanelController:
 
             return on_scale_change
 
-        def format_lumina_status_text(status: object) -> str:
+        def get_led_indicator_outline(
+            is_active: bool,
+        ) -> str:
             """
-            @brief 格式化 Lumina 连接状态文本。
-            @param status Lumina 状态快照对象。
-            @return str 用于显示的连接状态文本。
+            @brief 获取 LED 圆点描边颜色。
+            @param is_active 圆点是否代表当前保存的 LED 状态。
+            @return str 返回 Canvas 颜色字符串。
             """
 
-            if bool(getattr(status, "connected", False)):
-                return "已连接"
+            if is_active:
+                return ACCENT_COLOR
 
-            return "未连接"
+            return PANEL_BORDER
 
         def format_lumina_orientation_text(status: object) -> str:
             """
@@ -1708,24 +1715,11 @@ class BrightnessTrayPanelController:
                 anchor=tk.NW,
             )
 
-            status_label = tk.Label(
-                win,
-                text=format_lumina_status_text(status),
-                bg=PANEL_SURFACE,
-                fg=ACCENT_COLOR if getattr(status, "connected", False) else TEXT_SECONDARY,
-                font=tiny_font,
-                anchor=tk.E,
-            )
-            status_labels[device_key] = status_label
-            canvas.create_window(
-                card_right - 18,
-                card_top + 15,
-                window=status_label,
-                anchor=tk.NE,
-            )
-
             enabled_var = tk.BooleanVar(
                 value=bool(getattr(config, "enabled", False))
+            )
+            led_enabled_var = tk.BooleanVar(
+                value=bool(getattr(config, "led_enabled", True))
             )
             brightness_mode_var = tk.StringVar(
                 value=str(getattr(config, "brightness_mode", "manual"))
@@ -1760,6 +1754,130 @@ class BrightnessTrayPanelController:
                 for level in levels
             ]
             level_submit_after_id: str | None = None
+
+            def refresh_led_indicators() -> None:
+                """
+                @brief 按当前 LED 保存状态刷新红白圆点描边。
+                @return None
+                """
+
+                off_item, on_item = led_indicator_items[device_key]
+                is_enabled = led_enabled_var.get()
+                canvas.itemconfigure(
+                    off_item,
+                    outline=get_led_indicator_outline(not is_enabled),
+                )
+                canvas.itemconfigure(
+                    on_item,
+                    outline=get_led_indicator_outline(is_enabled),
+                )
+
+            def submit_led_state(enabled: bool) -> None:
+                """
+                @brief 保存并下发当前 Lumina LED 状态。
+                @param enabled 为 True 时点亮 LED，为 False 时熄灭 LED。
+                @return None
+                """
+
+                led_enabled_var.set(enabled)
+                setattr(config, "led_enabled", enabled)
+                refresh_led_indicators()
+                update_lumina_led_state(
+                    device_key,
+                    enabled,
+                )
+
+            def bind_led_dot(
+                item_id: int,
+                enabled: bool,
+                tooltip_text: str,
+            ) -> None:
+                """
+                @brief 为 LED 圆点绑定点击和悬停事件。
+                @param item_id Canvas 圆点对象标识。
+                @param enabled 点击后要保存的 LED 状态。
+                @param tooltip_text 鼠标悬停提示文本。
+                @return None
+                """
+
+                def on_led_enter(event: tk.Event) -> None:
+                    """
+                    @brief 处理 LED 圆点鼠标进入事件。
+                    @param event Tk 鼠标事件。
+                    @return None
+                    """
+
+                    del event
+                    canvas.configure(cursor="hand2")
+                    show_tooltip(
+                        tooltip_text,
+                        card_right - 48,
+                        card_top + 45,
+                    )
+
+                def on_led_leave(event: tk.Event) -> None:
+                    """
+                    @brief 处理 LED 圆点鼠标离开事件。
+                    @param event Tk 鼠标事件。
+                    @return None
+                    """
+
+                    del event
+                    canvas.configure(cursor="")
+                    hide_tooltip()
+
+                def on_led_clicked(event: tk.Event) -> None:
+                    """
+                    @brief 处理 LED 圆点点击事件。
+                    @param event Tk 鼠标事件。
+                    @return None
+                    """
+
+                    del event
+                    submit_led_state(enabled)
+
+                canvas.tag_bind(
+                    item_id,
+                    "<Button-1>",
+                    on_led_clicked,
+                )
+                canvas.tag_bind(item_id, "<Enter>", on_led_enter)
+                canvas.tag_bind(item_id, "<Leave>", on_led_leave)
+
+            led_dot_y = card_top + 23
+            led_off_dot = canvas.create_oval(
+                card_right - 54,
+                led_dot_y - 6,
+                card_right - 42,
+                led_dot_y + 6,
+                fill="#f05252",
+                outline=PANEL_BORDER,
+                width=2,
+            )
+            led_on_dot = canvas.create_oval(
+                card_right - 32,
+                led_dot_y - 6,
+                card_right - 20,
+                led_dot_y + 6,
+                fill="#ffffff",
+                outline=PANEL_BORDER,
+                width=2,
+            )
+            led_indicator_items[device_key] = (
+                led_off_dot,
+                led_on_dot,
+            )
+            refresh_led_indicators()
+            bind_led_dot(
+                led_off_dot,
+                False,
+                "关闭 LED",
+            )
+            bind_led_dot(
+                led_on_dot,
+                True,
+                "打开 LED",
+            )
 
             def cancel_device_config_later() -> None:
                 """
@@ -2835,7 +2953,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 2.4",
+            text="化学制品 | 2.5",
             fill=TEXT_SECONDARY,
             font=tiny_font,
             anchor=tk.SW,
@@ -2925,10 +3043,11 @@ class BrightnessTrayPanelController:
                         lumina_display_choices,
                         update_lumina_device_config,
                         update_monitor_lumina_binding,
+                        update_lumina_led_state,
                     )
                     return
 
-                for device_key, status_label in status_labels.items():
+                for device_key in led_indicator_items:
                     latest_snapshot = get_snapshot_by_key(
                         latest_snapshots,
                         device_key,
@@ -2939,11 +3058,6 @@ class BrightnessTrayPanelController:
 
                     _config, status, level_label = get_snapshot_parts(
                         latest_snapshot
-                    )
-                    latest_connected = bool(getattr(status, "connected", False))
-                    status_label.configure(
-                        text=format_lumina_status_text(status),
-                        fg=ACCENT_COLOR if latest_connected else TEXT_SECONDARY,
                     )
 
                     if device_key in orientation_labels:
@@ -4611,7 +4725,7 @@ class BrightnessTrayPanelController:
         author_text_id = canvas.create_text(
             content_left + 6,
             panel_height - 26,
-            text="化学制品 | 2.4",
+            text="化学制品 | 2.5",
             fill=TEXT_SECONDARY,
             font=small_font,
             anchor=tk.SW,

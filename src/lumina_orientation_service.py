@@ -36,6 +36,7 @@ LUMINA_USB_PRODUCT_KEYWORD = "Lumina"
 LUMINA_HID_REPORT_SIZE = 64
 LUMINA_HID_REPORT_ID = 1
 LUMINA_HID_DEVICE_ID_SIZE = 12
+LUMINA_HID_COMMAND_LED_CONTROL = 1
 LUMINA_HID_EVENT_READY = 1
 LUMINA_HID_EVENT_ORIENTATION = 2
 LUMINA_HID_EVENT_LUX = 3
@@ -142,6 +143,7 @@ class LuminaDeviceConfig:
     brightness_mode: str = "manual"
     brightness_display_indexes: list[int] = field(default_factory=list)
     brightness_levels: list[dict[str, float | int | None]] | None = None
+    led_enabled: bool = True
 
 
 @dataclass
@@ -726,6 +728,7 @@ def make_default_device_config(
         brightness_mode="manual",
         brightness_display_indexes=[],
         brightness_levels=[dict(level) for level in DEFAULT_BRIGHTNESS_LEVELS],
+        led_enabled=True,
     )
 
 
@@ -792,6 +795,7 @@ def build_device_config_from_data(
         brightness_levels=normalize_brightness_levels(
             config_data.get("brightness_levels")
         ),
+        led_enabled=bool(config_data.get("led_enabled", True)),
     )
 
 
@@ -849,6 +853,7 @@ def device_config_to_data(
         "brightness_levels": normalize_brightness_levels(
             device_config.brightness_levels
         ),
+        "led_enabled": bool(device_config.led_enabled),
     }
 
 
@@ -1209,6 +1214,34 @@ def open_lumina_hid_device(path: bytes | str | None):
     return device
 
 
+def send_lumina_led_control_report(
+    path: bytes | str,
+    enabled: bool,
+) -> None:
+    """
+    @brief 向指定 Lumina 发送 LED 开关控制报告。
+    @param path HID 设备路径。
+    @param enabled 为 True 时点亮 LED，为 False 时熄灭 LED。
+    @return None
+    """
+
+    report = bytearray(LUMINA_HID_REPORT_SIZE)
+    report[0] = LUMINA_HID_REPORT_ID
+    report[1] = LUMINA_HID_COMMAND_LED_CONTROL
+
+    if enabled:
+        report[2] = 1
+    else:
+        report[2] = 0
+
+    hid_device = open_lumina_hid_device(path)
+
+    try:
+        hid_device.send_feature_report(bytes(report))
+    finally:
+        hid_device.close()
+
+
 def parse_lumina_hid_report(report: bytes | bytearray | list[int]) -> LuminaHidEvent | None:
     """
     @brief 解析 Lumina HID 输入报告。
@@ -1394,6 +1427,7 @@ class LuminaOrientationWorker:
         self._device_paths: dict[str, bytes | str] = {}
         self._path_device_keys: dict[str, str] = {}
         self._brightness_stable_states: dict[str, LuminaBrightnessStableState] = {}
+        self._led_applied_states: dict[str, tuple[str, bool]] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
@@ -1602,6 +1636,7 @@ class LuminaOrientationWorker:
                     if brightness_levels is not None
                     else old_config.brightness_levels
                 ),
+                led_enabled=bool(old_config.led_enabled),
             )
             self._configs[normalized_key] = config
             self._refresh_multi_config_locked()
@@ -1708,6 +1743,145 @@ class LuminaOrientationWorker:
             "显示器 [%s] 自动亮度绑定更新为 %s。",
             monitor_index,
             normalized_key or "手动",
+        )
+
+    def update_device_led_state(
+        self,
+        device_key: str,
+        enabled: bool,
+    ) -> None:
+        """
+        @brief 更新指定 Lumina 的 LED 开关状态并立即下发到设备。
+        @param device_key Lumina 设备 key。
+        @param enabled 为 True 时点亮 LED，为 False 时熄灭 LED。
+        @return None
+        """
+
+        normalized_key = normalize_device_key(device_key)
+
+        with self._lock:
+            config = self._configs.get(normalized_key)
+
+            if config is None:
+                config = make_default_device_config(
+                    normalized_key,
+                    self._make_default_label_locked(),
+                )
+                self._configs[normalized_key] = config
+
+            config.led_enabled = bool(enabled)
+            self._refresh_multi_config_locked()
+            path = self._device_paths.get(normalized_key)
+            save_config_data = self._copy_multi_config_locked()
+
+        save_multi_config(self._config_path, save_config_data)
+
+        if path is not None:
+            self._send_led_state_to_path(
+                normalized_key,
+                path,
+                bool(enabled),
+            )
+
+        self._wake_event.set()
+        logger.info(
+            "Lumina [%s] LED 已%s。",
+            normalized_key,
+            "开启" if enabled else "关闭",
+        )
+
+    def turn_off_all_connected_leds(self) -> None:
+        """
+        @brief 为所有已连接 Lumina 发送一次 LED 关闭指令。
+        @return None
+        @note 该函数不会修改持久化配置，只用于锁屏或休眠前临时熄灯。
+        """
+
+        with self._lock:
+            path_items = list(self._device_paths.items())
+
+        for device_key, path in path_items:
+            self._send_led_state_to_path(
+                device_key,
+                path,
+                False,
+                remember_applied_state=False,
+            )
+
+    def restore_all_connected_leds(self) -> None:
+        """
+        @brief 按配置为所有已连接 Lumina 恢复 LED 状态。
+        @return None
+        @note 该函数用于解锁或休眠恢复后重新下发用户记忆的 LED 开关状态。
+        """
+
+        with self._lock:
+            self._led_applied_states.clear()
+            led_items = []
+
+            for device_key, path in self._device_paths.items():
+                normalized_key = normalize_device_key(device_key)
+                config = self._configs.get(normalized_key)
+
+                if config is None:
+                    continue
+
+                led_items.append(
+                    (
+                        normalized_key,
+                        path,
+                        bool(config.led_enabled),
+                    )
+                )
+
+        for device_key, path, enabled in led_items:
+            self._send_led_state_to_path(
+                device_key,
+                path,
+                enabled,
+            )
+
+        self._wake_event.set()
+
+    def _send_led_state_to_path(
+        self,
+        device_key: str,
+        path: bytes | str,
+        enabled: bool,
+        remember_applied_state: bool = True,
+    ) -> None:
+        """
+        @brief 向指定 HID 路径发送 LED 状态。
+        @param device_key Lumina 设备 key。
+        @param path HID 设备路径。
+        @param enabled 为 True 时点亮 LED，为 False 时熄灭 LED。
+        @param remember_applied_state 是否记住本次已同步状态。
+        @return None
+        """
+
+        path_text = decode_hid_text(path)
+
+        try:
+            send_lumina_led_control_report(path, enabled)
+        except Exception as error:
+            logger.warning(
+                "Lumina [%s] LED 控制失败: %s。",
+                device_key,
+                error,
+            )
+            return
+
+        if remember_applied_state:
+            with self._lock:
+                self._led_applied_states[normalize_device_key(device_key)] = (
+                    path_text,
+                    bool(enabled),
+                )
+
+        logger.info(
+            "Lumina [%s] LED 状态已下发为 %s。",
+            device_key,
+            "开启" if enabled else "关闭",
         )
 
     def set_enabled(self, enabled: bool) -> None:
@@ -1938,6 +2112,7 @@ class LuminaOrientationWorker:
         limited_devices = devices[:MAX_LUMINA_DEVICE_COUNT]
         connected_keys: set[str] = set()
         should_save_config = False
+        led_sync_items: list[tuple[str, bytes | str, bool]] = []
 
         with self._lock:
             for index, device in enumerate(limited_devices, start=1):
@@ -1963,6 +2138,23 @@ class LuminaOrientationWorker:
                 self._path_device_keys[path_key] = config.device_key
                 connected_keys.add(config.device_key)
                 self._device_paths[config.device_key] = path
+                applied_led_state = self._led_applied_states.get(
+                    config.device_key
+                )
+                target_led_state = (
+                    decode_hid_text(path),
+                    bool(config.led_enabled),
+                )
+
+                if applied_led_state != target_led_state:
+                    led_sync_items.append(
+                        (
+                            config.device_key,
+                            path,
+                            bool(config.led_enabled),
+                        )
+                    )
+
                 self._set_device_status_locked(
                     config.device_key,
                     True,
@@ -1990,6 +2182,8 @@ class LuminaOrientationWorker:
                 if config.device_key in connected_keys:
                     continue
 
+                self._device_paths.pop(config.device_key, None)
+                self._led_applied_states.pop(config.device_key, None)
                 self._set_device_status_locked(
                     config.device_key,
                     False,
@@ -2013,6 +2207,13 @@ class LuminaOrientationWorker:
 
         if should_save_config:
             save_multi_config(self._config_path, save_config_data)
+
+        for device_key, path, led_enabled in led_sync_items:
+            self._send_led_state_to_path(
+                device_key,
+                path,
+                led_enabled,
+            )
 
     def _device_thread_main(
         self,
@@ -2206,6 +2407,11 @@ class LuminaOrientationWorker:
             if old_key in self._brightness_stable_states:
                 self._brightness_stable_states[new_key] = (
                     self._brightness_stable_states.pop(old_key)
+                )
+
+            if old_key in self._led_applied_states:
+                self._led_applied_states[new_key] = self._led_applied_states.pop(
+                    old_key
                 )
 
             if path_key is not None:
@@ -2631,6 +2837,7 @@ class LuminaOrientationWorker:
             brightness_levels=normalize_brightness_levels(
                 config.brightness_levels
             ),
+            led_enabled=bool(config.led_enabled),
         )
 
     @staticmethod

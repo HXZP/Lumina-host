@@ -44,6 +44,13 @@ from lumina_logging import (
 )
 
 HRESULT = getattr(wintypes, "HRESULT", ctypes.c_long)
+LRESULT = getattr(wintypes, "LRESULT", wintypes.LPARAM)
+HINSTANCE = getattr(wintypes, "HINSTANCE", wintypes.HANDLE)
+HICON = getattr(wintypes, "HICON", wintypes.HANDLE)
+HCURSOR = getattr(wintypes, "HCURSOR", wintypes.HANDLE)
+HBRUSH = getattr(wintypes, "HBRUSH", wintypes.HANDLE)
+HMODULE = getattr(wintypes, "HMODULE", wintypes.HANDLE)
+HMENU = getattr(wintypes, "HMENU", wintypes.HANDLE)
 
 try:
     import pystray
@@ -65,6 +72,18 @@ WS_EX_NOACTIVATE = 0x08000000
 
 DWMWA_CLOAKED = 14
 MONITORINFOF_PRIMARY = 0x00000001
+HWND_MESSAGE = -3
+WM_DESTROY = 0x0002
+WM_CLOSE = 0x0010
+WM_POWERBROADCAST = 0x0218
+WM_WTSSESSION_CHANGE = 0x02B1
+PBT_APMSUSPEND = 0x0004
+PBT_APMRESUMEAUTOMATIC = 0x0012
+PBT_APMRESUMESUSPEND = 0x0007
+WTS_SESSION_LOCK = 0x7
+WTS_SESSION_UNLOCK = 0x8
+NOTIFY_FOR_THIS_SESSION = 0
+LUMINA_POWER_EVENT_CLASS_NAME = "LuminaPowerEventWindow"
 
 DEFAULT_DIM_DELAY_SECONDS = 5.0
 DEFAULT_TRANSITION_DURATION_SECONDS = 2.0
@@ -118,6 +137,51 @@ class MONITORINFOEXW(ctypes.Structure):
         ("rcWork", RECT),
         ("dwFlags", wintypes.DWORD),
         ("szDevice", wintypes.WCHAR * 32),
+    ]
+
+
+WNDPROC = ctypes.WINFUNCTYPE(
+    LRESULT,
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+)
+
+
+class WNDCLASSW(ctypes.Structure):
+    """
+    @brief 表示 Windows 窗口类注册结构。
+    @note 该结构用于创建隐藏消息窗口以监听锁屏和休眠事件。
+    """
+
+    _fields_ = [
+        ("style", wintypes.UINT),
+        ("lpfnWndProc", WNDPROC),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", HINSTANCE),
+        ("hIcon", HICON),
+        ("hCursor", HCURSOR),
+        ("hbrBackground", HBRUSH),
+        ("lpszMenuName", wintypes.LPCWSTR),
+        ("lpszClassName", wintypes.LPCWSTR),
+    ]
+
+
+class MSG(ctypes.Structure):
+    """
+    @brief 表示 Windows 消息循环中的单条消息。
+    @note 该结构用于隐藏窗口线程读取系统消息。
+    """
+
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt", POINT),
     ]
 
 
@@ -223,7 +287,22 @@ class RuntimeControlState:
     )
 
 
+@dataclass
+class LuminaPowerEventListener:
+    """
+    @brief 保存 Lumina 系统电源与会话事件监听状态。
+    @note 该对象用于在程序退出时销毁隐藏窗口并等待监听线程结束。
+    """
+
+    thread: threading.Thread
+    ready_event: threading.Event
+    window_handle: int | None = None
+    window_proc: object | None = None
+
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
+wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 try:
     dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
@@ -297,6 +376,87 @@ user32.GetMonitorInfoW.argtypes = [
     ctypes.POINTER(MONITORINFOEXW),
 ]
 user32.GetMonitorInfoW.restype = wintypes.BOOL
+
+kernel32.GetModuleHandleW.argtypes = [
+    wintypes.LPCWSTR,
+]
+kernel32.GetModuleHandleW.restype = HMODULE
+
+user32.RegisterClassW.argtypes = [
+    ctypes.POINTER(WNDCLASSW),
+]
+user32.RegisterClassW.restype = wintypes.ATOM
+
+user32.CreateWindowExW.argtypes = [
+    wintypes.DWORD,
+    wintypes.LPCWSTR,
+    wintypes.LPCWSTR,
+    wintypes.DWORD,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.HWND,
+    HMENU,
+    HINSTANCE,
+    wintypes.LPVOID,
+]
+user32.CreateWindowExW.restype = wintypes.HWND
+
+user32.DefWindowProcW.argtypes = [
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.DefWindowProcW.restype = wintypes.LPARAM
+
+user32.DestroyWindow.argtypes = [
+    wintypes.HWND,
+]
+user32.DestroyWindow.restype = wintypes.BOOL
+
+user32.PostMessageW.argtypes = [
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.PostMessageW.restype = wintypes.BOOL
+
+user32.PostQuitMessage.argtypes = [
+    ctypes.c_int,
+]
+user32.PostQuitMessage.restype = None
+
+user32.GetMessageW.argtypes = [
+    ctypes.POINTER(MSG),
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.UINT,
+]
+user32.GetMessageW.restype = wintypes.BOOL
+
+user32.TranslateMessage.argtypes = [
+    ctypes.POINTER(MSG),
+]
+user32.TranslateMessage.restype = wintypes.BOOL
+
+user32.DispatchMessageW.argtypes = [
+    ctypes.POINTER(MSG),
+]
+user32.DispatchMessageW.restype = wintypes.LPARAM
+
+wtsapi32.WTSRegisterSessionNotification.argtypes = [
+    wintypes.HWND,
+    wintypes.DWORD,
+]
+wtsapi32.WTSRegisterSessionNotification.restype = wintypes.BOOL
+
+wtsapi32.WTSUnRegisterSessionNotification.argtypes = [
+    wintypes.HWND,
+]
+wtsapi32.WTSUnRegisterSessionNotification.restype = wintypes.BOOL
 
 if dwmapi is not None:
     dwmapi.DwmGetWindowAttribute.argtypes = [
@@ -844,6 +1004,203 @@ def create_runtime_control_state(
         runtime_control_state.auto_dim_enabled_event.set()
 
     return runtime_control_state
+
+
+def handle_lumina_power_event(
+    event_name: str,
+    lumina_worker: LuminaOrientationWorker,
+) -> None:
+    """
+    @brief 处理系统锁屏或休眠事件并熄灭所有 Lumina LED。
+    @param event_name 系统事件名称。
+    @param lumina_worker Lumina 方向监听 worker。
+    @return None
+    """
+
+    logger.info("检测到%s，正在关闭所有 Lumina LED。", event_name)
+    lumina_worker.turn_off_all_connected_leds()
+
+
+def handle_lumina_power_restore_event(
+    event_name: str,
+    lumina_worker: LuminaOrientationWorker,
+) -> None:
+    """
+    @brief 处理系统解锁或休眠恢复事件并恢复所有 Lumina LED 状态。
+    @param event_name 系统事件名称。
+    @param lumina_worker Lumina 方向监听 worker。
+    @return None
+    """
+
+    logger.info("检测到%s，正在恢复所有 Lumina LED 状态。", event_name)
+    lumina_worker.restore_all_connected_leds()
+
+
+def start_lumina_power_event_listener(
+    lumina_worker: LuminaOrientationWorker,
+) -> LuminaPowerEventListener:
+    """
+    @brief 启动系统锁屏与休眠事件监听线程。
+    @param lumina_worker Lumina 方向监听 worker。
+    @return LuminaPowerEventListener 监听状态对象。
+    """
+
+    ready_event = threading.Event()
+    listener = LuminaPowerEventListener(
+        thread=threading.Thread(),
+        ready_event=ready_event,
+    )
+
+    def window_proc(
+        window_handle: int,
+        message: int,
+        w_param: int,
+        l_param: int,
+    ) -> int:
+        """
+        @brief 处理隐藏消息窗口收到的 Windows 消息。
+        @param window_handle 隐藏窗口句柄。
+        @param message Windows 消息编号。
+        @param w_param 消息参数。
+        @param l_param 消息参数。
+        @return int Windows 消息处理结果。
+        """
+
+        if message == WM_WTSSESSION_CHANGE and w_param == WTS_SESSION_LOCK:
+            handle_lumina_power_event(
+                "锁屏",
+                lumina_worker,
+            )
+            return 0
+
+        if message == WM_WTSSESSION_CHANGE and w_param == WTS_SESSION_UNLOCK:
+            handle_lumina_power_restore_event(
+                "解锁",
+                lumina_worker,
+            )
+            return 0
+
+        if message == WM_POWERBROADCAST and w_param == PBT_APMSUSPEND:
+            handle_lumina_power_event(
+                "休眠",
+                lumina_worker,
+            )
+            return 0
+
+        if message == WM_POWERBROADCAST and w_param in (
+            PBT_APMRESUMEAUTOMATIC,
+            PBT_APMRESUMESUSPEND,
+        ):
+            handle_lumina_power_restore_event(
+                "休眠恢复",
+                lumina_worker,
+            )
+            return 0
+
+        if message == WM_CLOSE:
+            user32.DestroyWindow(window_handle)
+            return 0
+
+        if message == WM_DESTROY:
+            user32.PostQuitMessage(0)
+            return 0
+
+        return int(
+            user32.DefWindowProcW(
+                window_handle,
+                message,
+                w_param,
+                l_param,
+            )
+        )
+
+    def listener_main() -> None:
+        """
+        @brief 隐藏消息窗口线程主函数。
+        @return None
+        """
+
+        window_proc_callback = WNDPROC(window_proc)
+        instance_handle = kernel32.GetModuleHandleW(None)
+        window_class = WNDCLASSW()
+        message = MSG()
+        window_class.lpfnWndProc = window_proc_callback
+        window_class.hInstance = instance_handle
+        window_class.lpszClassName = LUMINA_POWER_EVENT_CLASS_NAME
+        listener.window_proc = window_proc_callback
+
+        user32.RegisterClassW(ctypes.byref(window_class))
+        listener.window_handle = int(
+            user32.CreateWindowExW(
+                0,
+                LUMINA_POWER_EVENT_CLASS_NAME,
+                LUMINA_POWER_EVENT_CLASS_NAME,
+                0,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                instance_handle,
+                None,
+            )
+        )
+
+        if not listener.window_handle:
+            ready_event.set()
+            logger.warning("Lumina 系统事件监听窗口创建失败。")
+            return
+
+        if not wtsapi32.WTSRegisterSessionNotification(
+            listener.window_handle,
+            NOTIFY_FOR_THIS_SESSION,
+        ):
+            logger.warning("Lumina 锁屏事件注册失败。")
+
+        ready_event.set()
+
+        while user32.GetMessageW(ctypes.byref(message), None, 0, 0):
+            user32.TranslateMessage(ctypes.byref(message))
+            user32.DispatchMessageW(ctypes.byref(message))
+
+    listener.thread = threading.Thread(
+        target=listener_main,
+        daemon=True,
+        name="LuminaPowerEventListener",
+    )
+    listener.thread.start()
+    ready_event.wait(timeout=2.0)
+    return listener
+
+
+def stop_lumina_power_event_listener(
+    listener: LuminaPowerEventListener | None,
+) -> None:
+    """
+    @brief 停止系统锁屏与休眠事件监听线程。
+    @param listener 监听状态对象；为 None 时直接返回。
+    @return None
+    """
+
+    if listener is None:
+        return
+
+    if listener.window_handle is not None:
+        try:
+            wtsapi32.WTSUnRegisterSessionNotification(
+                listener.window_handle
+            )
+            user32.PostMessageW(
+                listener.window_handle,
+                WM_CLOSE,
+                0,
+                0,
+            )
+        except Exception:
+            pass
+
+    listener.thread.join(timeout=2.0)
 
 
 def is_auto_dim_enabled(
@@ -2401,6 +2758,22 @@ def on_brightness_panel_clicked(
             device_key or "手动",
         )
 
+    def update_lumina_led_state(
+        device_key: str,
+        enabled: bool,
+    ) -> None:
+        """
+        @brief 更新指定 Lumina 的 LED 开关状态。
+        @param device_key Lumina 设备 key。
+        @param enabled 为 True 时点亮 LED，为 False 时熄灭 LED。
+        @return None
+        """
+
+        lumina_worker.update_device_led_state(
+            device_key,
+            enabled,
+        )
+
     panel_controller.show_multi_lumina_brightness_panel(
         monitor_rows,
         get_latest_monitor_rows,
@@ -2416,6 +2789,7 @@ def on_brightness_panel_clicked(
         get_display_choices(),
         update_lumina_device_config,
         update_monitor_lumina_binding,
+        update_lumina_led_state,
     )
 
 
@@ -2686,6 +3060,7 @@ def run_with_system_tray(
     panel_controller = TrayPanel()
     panel_controller.start()
     lumina_worker.start()
+    power_event_listener = start_lumina_power_event_listener(lumina_worker)
     logger.info("托盘模式启动，Lumina worker 与亮度面板线程已启动。")
     worker_thread = threading.Thread(
         target=monitor_worker_entry,
@@ -2710,6 +3085,7 @@ def run_with_system_tray(
         )
     finally:
         request_stop(runtime_control_state)
+        stop_lumina_power_event_listener(power_event_listener)
         lumina_worker.stop()
         worker_thread.join(timeout=10.0)
 
