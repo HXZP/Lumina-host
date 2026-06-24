@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Lumina 显示器坐标轴示意图</title>
+  <desc id="desc">正对显示器观察时，横向从左到右为 X+，纵向从下到上为 Y+。设备卡中的屏幕X+和屏幕Y+用于绑定 Lumina 机身方向。</desc>
+  <defs>
+    <marker id="arrow-cyan" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 13 7 L 1 13 Z" fill="#0f9fb3"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 13 7 L 1 13 Z" fill="#f0a318"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#1d2430" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <rect width="960" height="540" rx="24" fill="#f6f8fb"/>
+
+  <g filter="url(#shadow)">
+    <rect x="88" y="68" width="508" height="318" rx="18" fill="#202630"/>
+    <rect x="112" y="94" width="460" height="258" rx="8" fill="#dcecf4"/>
+    <rect x="296" y="386" width="92" height="42" rx="6" fill="#2b3340"/>
+    <path d="M 236 454 H 448 L 418 424 H 266 Z" fill="#3a4452"/>
+  </g>
+
+  <text x="342" y="49" text-anchor="middle" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="24" font-weight="700" fill="#202630">正对显示器观察</text>
+
+  <line x1="170" y1="290" x2="510" y2="290" stroke="#0f9fb3" stroke-width="8" stroke-linecap="round" marker-end="url(#arrow-cyan)"/>
+  <line x1="170" y1="290" x2="170" y2="132" stroke="#f0a318" stroke-width="8" stroke-linecap="round" marker-end="url(#arrow-amber)"/>
+
+  <circle cx="170" cy="290" r="11" fill="#202630"/>
+  <text x="518" y="298" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="34" font-weight="700" fill="#0f9fb3">X+</text>
+  <text x="64" y="132" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="34" font-weight="700" fill="#f0a318">Y+</text>
+  <text x="272" y="326" text-anchor="middle" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="18" fill="#2b3340">横向：左 → 右</text>
+  <text x="136" y="210" text-anchor="middle" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="18" fill="#2b3340" transform="rotate(-90 136 210)">纵向：下 → 上</text>
+
+  <g filter="url(#shadow)">
+    <rect x="650" y="78" width="234" height="270" rx="16" fill="#252b35"/>
+    <text x="674" y="116" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="22" font-weight="700" fill="#f4f7fb">Lumina 设备卡</text>
+    <circle cx="824" cy="106" r="7" fill="#f05252" stroke="#3a4352" stroke-width="3"/>
+    <circle cx="848" cy="106" r="7" fill="#ffffff" stroke="#ffc43d" stroke-width="3"/>
+
+    <text x="674" y="156" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="16" fill="#aab4c3">屏幕X+</text>
+    <rect x="750" y="136" width="92" height="32" rx="7" fill="#151922" stroke="#3a4352"/>
+    <text x="796" y="158" text-anchor="middle" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="17" font-weight="700" fill="#f4f7fb">Y+</text>
+
+    <text x="674" y="208" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="16" fill="#aab4c3">屏幕Y+</text>
+    <rect x="750" y="188" width="92" height="32" rx="7" fill="#151922" stroke="#3a4352"/>
+    <text x="796" y="210" text-anchor="middle" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="17" font-weight="700" fill="#f4f7fb">Z+</text>
+
+    <text x="674" y="260" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="16" fill="#aab4c3">含义</text>
+    <text x="674" y="290" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="16" fill="#f4f7fb">把显示器坐标方向</text>
+    <text x="674" y="318" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="16" fill="#f4f7fb">绑定到 Lumina 机身方向</text>
+  </g>
+
+  <path d="M 600 206 C 626 206, 626 206, 650 206" fill="none" stroke="#718096" stroke-width="3" stroke-dasharray="8 8"/>
+  <path d="M 596 288 C 625 288, 625 288, 650 288" fill="none" stroke="#718096" stroke-width="3" stroke-dasharray="8 8"/>
+
+  <rect x="112" y="468" width="736" height="38" rx="19" fill="#e8eef5"/>
+  <text x="480" y="493" text-anchor="middle" font-family="Microsoft YaHei UI, Arial, sans-serif" font-size="18" fill="#2b3340">屏幕X+ = 显示器左到右；屏幕Y+ = 显示器下到上</text>
+</svg>
